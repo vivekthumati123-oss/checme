@@ -4,17 +4,10 @@
 
 ## Marketplace plugins
 
-Marketplace `axon-sdlc-l2-agents` → `techm-cto-caio/axon-ghcp-L2-marketplace`
+_No bundles.json._
 
 | Plugin | Version | Status | Agents | Skills | Hooks | Instructions |
 | --- | --- | --- | --- | --- | --- | --- |
-| **L2 Guardrails** `l2-guardrails` | 1.3.1 | published | - | - | l2-guardrails, l2-audit | l2-guardrails |
-| **SDLC Quality** `sdlc-quality` | 1.3.1 | published | unit-agent | aaa-unit-tests | - | unit-testing |
-| **SDLC Delivery** `sdlc-delivery` | 1.3.1 | published | code-agent, task-agent | story-decomposition, work-items | - | javascript, python |
-| **SDLC Design** `sdlc-design` | 1.0.0 | published | fsd-agent, hld-agent, architectconnect | work-items, architectconnect, l2-platform-runner | - | - |
-| **SDLC Modernization** `sdlc-modernization` | 1.0.1 | published | modplanner, fsd-agent | work-items, l2-platform-runner | l2-guardrails, l2-audit | l2-guardrails |
-| **Copilot FinOps** `copilot-finops` | 1.4.1 | published | finops-agent | copilot-finops-report, copilot-metrics-fetcher, cost-projection-engine, insight-engine | l2-audit | teams-alert-format |
-| **Figma Design** `figma-design` | 1.0.0 | published | figma-agent | figma-agent-setup, figma-build-screen, figma-component-builder, figma-design-system-audit, figma-flow-diagram, figma-generate-design, figma-generate-library, figma-requirements-intake, figma-tokens-sync, figma-use, figma-wireframe | l2-guardrails, l2-audit | l2-guardrails, figma-ui-code |
 
 ## L2 agents (automation)
 
@@ -40,7 +33,7 @@ Marketplace `axon-sdlc-l2-agents` → `techm-cto-caio/axon-ghcp-L2-marketplace`
 | [`hld-agent.agent.md`](../.github/agents/hld-agent.agent.md) | Produces a high level design grounded in the real repository structure, with one Mermaid container diagram. Use when designing or documenting architecture. | read, search, edit, execute |
 | [`modplanner.agent.md`](../.github/agents/modplanner.agent.md) | Generates dependency-ordered modernization plans from application assessments. Use when planning a migration, previewing Jira epics and stories, or linking approved creation receipts. | read, search, execute |
 | [`task-agent.agent.md`](../.github/agents/task-agent.agent.md) | Breaks a user story into estimated development sub-tasks that each map to an acceptance criterion, and can create them as child work items in GitHub, Jira or Azure DevOps. Use when planning a story or sprint. | read, search, execute |
-| [`unit-agent.agent.md`](../.github/agents/unit-agent.agent.md) | An autonomous SDET agent combining strict enterprise testing methodologies (Kill Switch, Fake Timers, Context Skeletons) with an aggressive, sandboxed 3-retry self-healing execution loop. | read, search, edit, execute |
+| [`unit-agent.agent.md`](../.github/agents/unit-agent.agent.md) | Writes unit tests for changed or untested functions in this repo using the unit-agent CLI. Finds untested code, drafts tests in a staging folder, validates them, and applies them only after you confirm. | read, edit, search, execute |
 
 ## Instructions
 

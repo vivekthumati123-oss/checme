@@ -1,0 +1,735 @@
+{
+  "$id": "https://unit-agent.local/schema/unit-agent.schema.json",
+  "title": "Unit Agent Configuration (.unit-agent.yml)",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "number",
+      "const": 1
+    },
+    "mode": {
+      "default": "report",
+      "type": "string",
+      "enum": [
+        "report",
+        "propose"
+      ]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "maxSymbolsPerPr": {
+          "default": 10,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "maxFilesPerPr": {
+          "default": 6,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 15
+        },
+        "maxTestsPerSymbol": {
+          "default": 6,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "maxContextChars": {
+          "default": 60000,
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 9007199254740991
+        },
+        "minExecutableLines": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "runTimeoutMinutes": {
+          "default": 25,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "repairAttempts": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "flakeRuns": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "perRunTestTimeoutSeconds": {
+          "default": 180,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxRequestsPerRun": {
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        }
+      },
+      "required": [
+        "maxSymbolsPerPr",
+        "maxFilesPerPr",
+        "maxTestsPerSymbol",
+        "maxContextChars",
+        "minExecutableLines",
+        "runTimeoutMinutes",
+        "repairAttempts",
+        "flakeRuns",
+        "perRunTestTimeoutSeconds",
+        "maxRequestsPerRun"
+      ],
+      "additionalProperties": false
+    },
+    "baseline": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "default": "run",
+          "type": "string",
+          "enum": [
+            "run",
+            "skip"
+          ]
+        },
+        "timeoutMinutes": {
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        }
+      },
+      "required": [
+        "mode",
+        "timeoutMinutes"
+      ],
+      "additionalProperties": false
+    },
+    "targets": {
+      "type": "object",
+      "properties": {
+        "patchCoverage": {
+          "default": 80,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "symbolCoverageThreshold": {
+          "default": 60,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "patchCoverage",
+        "symbolCoverageThreshold"
+      ],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "extraBannedImports": {
+          "default": {},
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "dropZeroGainFiles": {
+          "default": true,
+          "type": "boolean"
+        },
+        "provenanceHeader": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "extraBannedImports",
+        "dropZeroGainFiles",
+        "provenanceHeader"
+      ],
+      "additionalProperties": false
+    },
+    "validate": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "default": "copy",
+          "type": "string",
+          "enum": [
+            "copy",
+            "inplace"
+          ]
+        },
+        "maxCopyMB": {
+          "default": 500,
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 5000
+        }
+      },
+      "required": [
+        "workspace",
+        "maxCopyMB"
+      ],
+      "additionalProperties": false
+    },
+    "env": {
+      "type": "object",
+      "properties": {
+        "pass": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "passProxy": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pass",
+        "passProxy"
+      ],
+      "additionalProperties": false
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "eol": {
+          "default": "auto",
+          "type": "string",
+          "enum": [
+            "auto",
+            "lf",
+            "crlf"
+          ]
+        }
+      },
+      "required": [
+        "eol"
+      ],
+      "additionalProperties": false
+    },
+    "privacy": {
+      "type": "object",
+      "properties": {
+        "neverSend": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "neverSend"
+      ],
+      "additionalProperties": false
+    },
+    "offline": {
+      "type": "object",
+      "properties": {
+        "strategy": {
+          "default": "none",
+          "type": "string",
+          "enum": [
+            "none",
+            "unshare"
+          ]
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "additionalProperties": false
+    },
+    "commit": {
+      "type": "object",
+      "properties": {
+        "auth": {
+          "default": "github_token",
+          "type": "string",
+          "enum": [
+            "github_token",
+            "pat"
+          ]
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "additionalProperties": false
+    },
+    "local": {
+      "type": "object",
+      "properties": {
+        "baseRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stagingDir": {
+          "default": ".unit-agent/chat/proposed",
+          "type": "string",
+          "minLength": 1
+        },
+        "maxRepairIterations": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "reuseCoverage": {
+          "default": true,
+          "type": "boolean"
+        },
+        "confirmBeforeRun": {
+          "default": true,
+          "type": "boolean"
+        },
+        "stageApplied": {
+          "default": false,
+          "type": "boolean"
+        },
+        "nodeCommand": {
+          "default": "node",
+          "type": "string",
+          "minLength": 1
+        },
+        "chatTools": {
+          "default": [
+            "read",
+            "edit",
+            "search",
+            "execute"
+          ],
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "stagingDir",
+        "maxRepairIterations",
+        "reuseCoverage",
+        "confirmBeforeRun",
+        "stageApplied",
+        "nodeCommand",
+        "chatTools"
+      ],
+      "additionalProperties": false
+    },
+    "languages": {
+      "type": "object",
+      "properties": {
+        "javascript": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "framework": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "auto",
+                "jest",
+                "vitest",
+                "pytest",
+                "junit5"
+              ]
+            },
+            "workingDirectory": {
+              "default": ".",
+              "type": "string",
+              "minLength": 1
+            },
+            "toolchain": {
+              "type": "string",
+              "minLength": 1
+            },
+            "toolchainFile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "installCommand": {
+              "type": "string"
+            },
+            "testCommand": {
+              "type": "string"
+            },
+            "coverageFile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "coverageFormat": {
+              "type": "string",
+              "enum": [
+                "lcov",
+                "cobertura",
+                "jacoco"
+              ]
+            },
+            "sourceGlobs": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "testPathPatterns": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "generatedSuffix": {
+              "default": ".unit-agent",
+              "type": "string",
+              "minLength": 1
+            },
+            "formatCommand": {
+              "type": "string"
+            },
+            "lintCommand": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "framework",
+            "workingDirectory",
+            "testCommand",
+            "coverageFile",
+            "coverageFormat",
+            "sourceGlobs",
+            "testPathPatterns",
+            "generatedSuffix"
+          ],
+          "additionalProperties": false
+        },
+        "python": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "framework": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "auto",
+                "jest",
+                "vitest",
+                "pytest",
+                "junit5"
+              ]
+            },
+            "workingDirectory": {
+              "default": ".",
+              "type": "string",
+              "minLength": 1
+            },
+            "toolchain": {
+              "type": "string",
+              "minLength": 1
+            },
+            "toolchainFile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "installCommand": {
+              "type": "string"
+            },
+            "testCommand": {
+              "type": "string"
+            },
+            "coverageFile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "coverageFormat": {
+              "type": "string",
+              "enum": [
+                "lcov",
+                "cobertura",
+                "jacoco"
+              ]
+            },
+            "sourceGlobs": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "testPathPatterns": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "generatedSuffix": {
+              "default": ".unit-agent",
+              "type": "string",
+              "minLength": 1
+            },
+            "formatCommand": {
+              "type": "string"
+            },
+            "lintCommand": {
+              "type": "string"
+            },
+            "pythonPath": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "enabled",
+            "framework",
+            "workingDirectory",
+            "testCommand",
+            "coverageFile",
+            "coverageFormat",
+            "sourceGlobs",
+            "testPathPatterns",
+            "generatedSuffix"
+          ],
+          "additionalProperties": false
+        },
+        "java": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "framework": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "auto",
+                "jest",
+                "vitest",
+                "pytest",
+                "junit5"
+              ]
+            },
+            "workingDirectory": {
+              "default": ".",
+              "type": "string",
+              "minLength": 1
+            },
+            "toolchain": {
+              "type": "string",
+              "minLength": 1
+            },
+            "toolchainFile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "installCommand": {
+              "type": "string"
+            },
+            "testCommand": {
+              "type": "string"
+            },
+            "coverageFile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "coverageFormat": {
+              "type": "string",
+              "enum": [
+                "lcov",
+                "cobertura",
+                "jacoco"
+              ]
+            },
+            "sourceGlobs": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "testPathPatterns": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "generatedSuffix": {
+              "default": ".unit-agent",
+              "type": "string",
+              "minLength": 1
+            },
+            "formatCommand": {
+              "type": "string"
+            },
+            "lintCommand": {
+              "type": "string"
+            },
+            "buildTool": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "auto",
+                "maven",
+                "gradle"
+              ]
+            },
+            "toolPreference": {
+              "default": [
+                "wrapper",
+                "system"
+              ],
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "wrapper",
+                  "system"
+                ]
+              }
+            },
+            "strictWrapper": {
+              "default": false,
+              "type": "boolean"
+            },
+            "distribution": {
+              "default": "temurin",
+              "type": "string",
+              "minLength": 1
+            },
+            "testResultsDir": {
+              "type": "string",
+              "minLength": 1
+            },
+            "coverage": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "default": "auto",
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "repo",
+                    "inject",
+                    "off"
+                  ]
+                },
+                "jacocoVersion": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "enabled",
+            "framework",
+            "workingDirectory",
+            "testCommand",
+            "coverageFile",
+            "coverageFormat",
+            "sourceGlobs",
+            "testPathPatterns",
+            "generatedSuffix",
+            "buildTool",
+            "toolPreference",
+            "strictWrapper",
+            "distribution",
+            "coverage"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "exclude": {
+      "default": [
+        "**/generated/**",
+        "**/*.d.ts",
+        "**/migrations/**",
+        "**/node_modules/**",
+        "**/vendor/**"
+      ],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "version",
+    "mode",
+    "limits",
+    "baseline",
+    "targets",
+    "policy",
+    "validate",
+    "env",
+    "files",
+    "privacy",
+    "offline",
+    "commit",
+    "local",
+    "languages",
+    "exclude"
+  ],
+  "additionalProperties": false
+}

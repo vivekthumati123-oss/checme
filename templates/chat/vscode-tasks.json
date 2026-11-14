@@ -1,0 +1,57 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "unit-agent: config check",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js config check",
+      "problemMatcher": []
+    },
+    {
+      "label": "unit-agent: doctor",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local doctor --full",
+      "problemMatcher": []
+    },
+    {
+      "label": "unit-agent: detect",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local detect --scope ${input:unitAgentScope}",
+      "problemMatcher": []
+    },
+    {
+      "label": "unit-agent: validate",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local validate",
+      "problemMatcher": []
+    },
+    {
+      "label": "unit-agent: apply (dry run)",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local apply",
+      "problemMatcher": []
+    },
+    {
+      "label": "unit-agent: apply (write files)",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local apply --confirm",
+      "problemMatcher": []
+    },
+    {
+      "label": "unit-agent: status",
+      "type": "shell",
+      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local status",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "unitAgentScope",
+      "type": "pickString",
+      "description": "Which changes should get tests?",
+      "options": ["branch", "staged", "worktree"],
+      "default": "branch"
+    }
+  ]
+}
+

@@ -1,0 +1,17 @@
+name: "setup-agent"
+description: "Install the Node runtime the Unit Agent CLI runs on and export UA_NODE"
+inputs:
+  node-version:
+    description: "Node.js version for running the Unit Agent CLI"
+    required: false
+    default: "22"
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js for Unit Agent
+      uses: actions/setup-node@v4
+      with:
+        node-version: "${{ inputs.node-version }}"
+    - name: Export UA_NODE
+      shell: bash
+      run: echo "UA_NODE=$(node -p 'process.execPath')" >> "$GITHUB_ENV"

@@ -1,0 +1,16 @@
+diff --git a/src/obsolete.ts b/src/obsolete.ts
+deleted file mode 100644
+index 1111111..0000000
+--- a/src/obsolete.ts
++++ /dev/null
+@@ -1,4 +0,0 @@
+-export function oldHelper(): number {
+-  return 1;
+-}
+diff --git a/src/calc.ts b/src/calc.ts
+index 1111111..2222222 100644
+--- a/src/calc.ts
++++ b/src/calc.ts
+@@ -5,3 +5,0 @@
+-  const deadLine = 1;
+

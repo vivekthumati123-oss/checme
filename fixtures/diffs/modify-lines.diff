@@ -1,0 +1,13 @@
+diff --git a/src/calc.ts b/src/calc.ts
+index 1111111..2222222 100644
+--- a/src/calc.ts
++++ b/src/calc.ts
+@@ -10,0 +11,3 @@ export function divide(a: number, b: number): number {
++  if (b === 0) {
++    throw new Error("division by zero");
++  }
+@@ -18,2 +21,2 @@ export function clamp(v: number, min: number, max: number): number {
+-  return v;
++  if (v < min) return min;
++  return v > max ? max : v;
+

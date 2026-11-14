@@ -1,0 +1,17 @@
+version: 1
+mode: report
+languages:
+  java:
+    enabled: true
+    framework: junit5
+    buildTool: gradle
+    testCommand: "gradle test jacocoTestReport"
+    coverageFile: build/reports/jacoco/test/jacocoTestReport.xml
+    coverageFormat: jacoco
+    coverage:
+      mode: auto
+    sourceGlobs:
+      - "src/main/java/**/*.java"
+    testPathPatterns:
+      - "src/test/java/{package}/{Name}Test.java"
+

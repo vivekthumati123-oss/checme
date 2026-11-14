@@ -1,0 +1,53 @@
+name: "unit-agent cli"
+description: "Run one unit-agent CLI command from the bundled dist under UA_NODE"
+inputs:
+  command:
+    required: true
+    description: "CLI command"
+  args:
+    required: false
+    default: ""
+    description: "Extra CLI flags"
+  github-token:
+    required: false
+    default: ""
+    description: "GitHub token for comments, PR reads, and approvals"
+  commit-token:
+    required: false
+    default: ""
+    description: "Commit token (optional PAT or github.token)"
+  copilot-token:
+    required: false
+    default: ""
+    description: "Copilot SDK token (passed only in secret-scoped LLM jobs)"
+  job-results:
+    required: false
+    default: ""
+    description: "JSON map of upstream job results (publish stage)"
+  approval-environment:
+    required: false
+    default: "unit-agent-approval"
+    description: "GitHub Environment name holding required reviewers"
+  approval-check:
+    required: false
+    default: "api"
+    description: "Approval verification mode: api | manual"
+runs:
+  using: "composite"
+  steps:
+    - name: Run unit-agent CLI
+      id: run
+      shell: bash
+      env:
+        UA_COMMAND: ${{ inputs.command }}
+        UA_ARGS: ${{ inputs.args }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        UA_COMMIT_TOKEN: ${{ inputs.commit-token }}
+        COPILOT_GITHUB_TOKEN: ${{ inputs.copilot-token }}
+        UA_JOB_RESULTS: ${{ inputs.job-results }}
+        UA_APPROVAL_ENV: ${{ inputs.approval-environment }}
+        UA_APPROVAL_CHECK: ${{ inputs.approval-check }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086
+        "${UA_NODE:-node}" --throw-deprecation "${{ github.action_path }}/../../../dist/cli.js" "$UA_COMMAND" $UA_ARGS

@@ -1,0 +1,111 @@
+name: unit-agent-validate
+on:
+  workflow_call:
+    inputs:
+      attempt:
+        type: number
+        required: true
+      input-artifact:
+        type: string
+        required: true
+      input-dir:
+        type: string
+        required: true
+      input-file:
+        type: string
+        required: true
+      snapshot-artifact:
+        type: string
+        required: true
+      output-artifact:
+        type: string
+        required: true
+      languages:
+        type: string
+        required: true
+      toolchains:
+        type: string
+        required: true
+      config-path:
+        type: string
+        default: ".unit-agent.yml"
+      agent-node-version:
+        type: string
+        default: "22"
+    outputs:
+      needs_repair:
+        value: ${{ jobs.validate.outputs.needs_repair }}
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      needs_repair: ${{ steps.run.outputs.needs_repair }}
+    env:
+      UA_CONFIG: ${{ inputs.config-path }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-agent
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-prepare
+          path: .unit-agent/prepare
+      - uses: actions/download-artifact@v4
+        with:
+          name: "${{ inputs.input-artifact }}"
+          path: ".unit-agent/${{ inputs.input-dir }}"
+      - uses: actions/setup-node@v4
+        if: contains(inputs.languages, 'javascript') && fromJSON(inputs.toolchains).node.source != 'runner-default'
+        with:
+          node-version: ${{ fromJSON(inputs.toolchains).node.version }}
+          node-version-file: ${{ fromJSON(inputs.toolchains).node.file }}
+      - uses: actions/setup-python@v5
+        if: contains(inputs.languages, 'python') && fromJSON(inputs.toolchains).python.source != 'runner-default'
+        with:
+          python-version: ${{ fromJSON(inputs.toolchains).python.version }}
+          python-version-file: ${{ fromJSON(inputs.toolchains).python.file }}
+      - uses: actions/setup-java@v4
+        if: contains(inputs.languages, 'java') && fromJSON(inputs.toolchains).java.source != 'runner-default'
+        with:
+          distribution: ${{ fromJSON(inputs.toolchains).java.distribution }}
+          java-version: ${{ fromJSON(inputs.toolchains).java.version }}
+          java-version-file: ${{ fromJSON(inputs.toolchains).java.file }}
+      - uses: ./.github/actions/cli
+        with:
+          command: install
+      - id: static
+        uses: ./.github/actions/cli
+        with:
+          command: validate
+          args: "--attempt ${{ inputs.attempt }} --phase static --input .unit-agent/${{ inputs.input-file }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.snapshot-artifact }}
+          path: .unit-agent/snapshot${{ inputs.attempt }}
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: warn
+      - id: run
+        uses: ./.github/actions/cli
+        with:
+          command: validate
+          args: "--attempt ${{ inputs.attempt }} --phase run --input .unit-agent/${{ inputs.input-file }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.output-artifact }}
+          path: .unit-agent/validate${{ inputs.attempt }}
+          retention-days: 7
+          overwrite: true
+

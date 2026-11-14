@@ -72,3 +72,21 @@ how to build agents.
 - Jira OAuth (3LO), ADO Entra ID auth, Confluence and SharePoint are not implemented.
 - Corporate proxies: Node's `fetch` needs `NODE_USE_ENV_PROXY=1` (recent Node) to use `HTTPS_PROXY`.
 - Plugin hook `${PLUGIN_ROOT}` and plugin manifest fields: verify on your Copilot CLI / VS Code version.
+
+---
+
+## Unit Agent (`@unit-agent` / TestGen v2.0)
+
+Automated PR and local/VS Code Chat unit test generation for **JavaScript/TypeScript** (Jest, Vitest), **Python** (pytest), and **Java** (JUnit 5 via Maven & Gradle), built strictly without Docker or MCP.
+
+```bash
+npm run build:unit-agent      # bundles dist/cli.js + dist/wasm/* (target node20)
+node dist/cli.js --help       # CI pipeline & local chat commands
+node dist/cli.js config check # validate .unit-agent.yml against schema/unit-agent.schema.json
+npm test                      # Vitest unit, golden, integration, contract, security suites
+```
+
+- **Onboarding & Config:** [docs/setup.md](docs/setup.md), [docs/config-reference.md](docs/config-reference.md), [docs/supported-versions.md](docs/supported-versions.md)
+- **Operations & Security:** [docs/runbook.md](docs/runbook.md), [docs/approver-guide.md](docs/approver-guide.md), [docs/security.md](docs/security.md)
+- **Local / VS Code Chat:** [docs/chat-setup.md](docs/chat-setup.md), [docs/chat-troubleshooting.md](docs/chat-troubleshooting.md), [docs/chat-verification.md](docs/chat-verification.md)
+- **Release & Testing:** [docs/unit-agent-test-plan.md](docs/unit-agent-test-plan.md), [docs/release-checklist.md](docs/release-checklist.md), [docs/decisions.md](docs/decisions.md)

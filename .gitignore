@@ -4,7 +4,12 @@ __pycache__/
 .venv/
 .l2/
 .l2-platform/
+.unit-agent/
 dist/
+coverage/
+.pytest_cache/
+target/
+build/
 .env
 .env.local
 .env.*.local

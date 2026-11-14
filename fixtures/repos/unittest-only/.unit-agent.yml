@@ -1,0 +1,14 @@
+version: 1
+mode: report
+languages:
+  python:
+    enabled: true
+    framework: auto
+    testCommand: "python -m unittest discover -s tests"
+    coverageFile: coverage.xml
+    coverageFormat: cobertura
+    sourceGlobs:
+      - "src/**/*.py"
+    testPathPatterns:
+      - "tests/test_{name}.py"
+

@@ -1,0 +1,89 @@
+{
+  "language": "python",
+  "filePath": "src/python/sample.py",
+  "hasErrors": false,
+  "tooBroken": false,
+  "isTestFile": false,
+  "isGeneratedFile": false,
+  "primaryClassName": "InvoiceCalculator",
+  "imports": [
+    "typing"
+  ],
+  "allSymbols": [
+    {
+      "symbolId": "src/python/sample.py#normalize_tags",
+      "qualifiedName": "normalize_tags",
+      "kind": "function",
+      "signature": "def normalize_tags(tags: List[str]) -> List[str]",
+      "startLine": 4,
+      "endLine": 10,
+      "complexity": 4,
+      "executableLinesFallback": 6,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false
+    },
+    {
+      "symbolId": "src/python/sample.py#InvoiceCalculator.__init__",
+      "qualifiedName": "InvoiceCalculator.__init__",
+      "kind": "constructor",
+      "signature": "def __init__(self, discount_rate: float = 0.0) -> None",
+      "startLine": 14,
+      "endLine": 15,
+      "complexity": 1,
+      "executableLinesFallback": 1,
+      "exported": true,
+      "abstract": false,
+      "trivial": true,
+      "isTest": false,
+      "className": "InvoiceCalculator"
+    },
+    {
+      "symbolId": "src/python/sample.py#InvoiceCalculator.compute_total",
+      "qualifiedName": "InvoiceCalculator.compute_total",
+      "kind": "method",
+      "signature": "def compute_total(self, amounts: List[float]) -> float",
+      "startLine": 17,
+      "endLine": 21,
+      "complexity": 2,
+      "executableLinesFallback": 4,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false,
+      "className": "InvoiceCalculator"
+    }
+  ],
+  "eligibleSymbols": [
+    {
+      "symbolId": "src/python/sample.py#normalize_tags",
+      "qualifiedName": "normalize_tags",
+      "kind": "function",
+      "signature": "def normalize_tags(tags: List[str]) -> List[str]",
+      "startLine": 4,
+      "endLine": 10,
+      "complexity": 4,
+      "executableLinesFallback": 6,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false
+    },
+    {
+      "symbolId": "src/python/sample.py#InvoiceCalculator.compute_total",
+      "qualifiedName": "InvoiceCalculator.compute_total",
+      "kind": "method",
+      "signature": "def compute_total(self, amounts: List[float]) -> float",
+      "startLine": 17,
+      "endLine": 21,
+      "complexity": 2,
+      "executableLinesFallback": 4,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false,
+      "className": "InvoiceCalculator"
+    }
+  ]
+}

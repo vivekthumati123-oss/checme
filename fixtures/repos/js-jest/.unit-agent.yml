@@ -1,0 +1,14 @@
+version: 1
+mode: report
+languages:
+  javascript:
+    enabled: true
+    framework: jest
+    testCommand: "npx jest --coverage"
+    coverageFile: coverage/lcov.info
+    coverageFormat: lcov
+    sourceGlobs:
+      - "src/**/*.js"
+    testPathPatterns:
+      - "test/{name}.test.js"
+

@@ -1,0 +1,9 @@
+diff --git a/src/crlf.ts b/src/crlf.ts
+index 1111111..2222222 100644
+--- a/src/crlf.ts
++++ b/src/crlf.ts
+@@ -1,0 +2,3 @@ export function normalizeCrlf(s: string): string {
++  const cleaned = s.replace(/\r\n/g, "\n");
++  return cleaned;
++}
+

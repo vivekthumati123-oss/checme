@@ -1,0 +1,15 @@
+version: 1
+mode: report
+languages:
+  java:
+    enabled: true
+    framework: auto
+    buildTool: maven
+    testCommand: "mvn test"
+    coverageFile: target/site/jacoco/jacoco.xml
+    coverageFormat: jacoco
+    sourceGlobs:
+      - "src/main/java/**/*.java"
+    testPathPatterns:
+      - "src/test/java/{package}/{Name}Test.java"
+

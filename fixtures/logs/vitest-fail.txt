@@ -1,0 +1,9 @@
+ FAIL  test/unit/calc.test.ts > add > handles negative numbers
+AssertionError: expected -5 to be 5 // Object.is equality
+ ❯ test/unit/calc.test.ts:8:26
+      6|   expect(add(-2, -3)).toBe(5);
+      7| });
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+

@@ -1,0 +1,289 @@
+name: unit-agent-run
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        type: string
+        default: ".unit-agent.yml"
+      approval-environment:
+        type: string
+        default: "unit-agent-approval"
+      approval-check:
+        type: string
+        default: "api"
+      agent-node-version:
+        type: string
+        default: "22"
+    secrets:
+      COPILOT_GITHUB_TOKEN:
+        required: true
+      COMMIT_PAT:
+        required: false
+
+permissions: {}
+
+env:
+  UA_CONFIG: ${{ inputs.config-path }}
+  UNIT_AGENT_ENABLED: ${{ vars.UNIT_AGENT_ENABLED }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      has_work: ${{ steps.detect.outputs.has_work }}
+      has_notice: ${{ steps.notice.outputs.has_notice }}
+      languages: ${{ steps.plan.outputs.languages }}
+      toolchains: ${{ steps.plan.outputs.toolchains }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-agent
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - id: guard
+        uses: ./.github/actions/cli
+        with:
+          command: guard
+          github-token: "${{ github.token }}"
+      - id: plan
+        if: steps.guard.outputs.skip != 'true'
+        uses: ./.github/actions/cli
+        with:
+          command: plan
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true' && contains(steps.plan.outputs.languages, 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
+        with:
+          node-version: ${{ fromJSON(steps.plan.outputs.toolchains).node.version }}
+          node-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).node.file }}
+      - uses: actions/setup-python@v5
+        if: steps.guard.outputs.skip != 'true' && contains(steps.plan.outputs.languages, 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
+        with:
+          python-version: ${{ fromJSON(steps.plan.outputs.toolchains).python.version }}
+          python-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).python.file }}
+      - uses: actions/setup-java@v4
+        if: steps.guard.outputs.skip != 'true' && contains(steps.plan.outputs.languages, 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
+        with:
+          distribution: ${{ fromJSON(steps.plan.outputs.toolchains).java.distribution }}
+          java-version: ${{ fromJSON(steps.plan.outputs.toolchains).java.version }}
+          java-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).java.file }}
+      - if: steps.guard.outputs.skip != 'true'
+        uses: ./.github/actions/cli
+        with:
+          command: install
+      - if: steps.guard.outputs.skip != 'true'
+        uses: ./.github/actions/cli
+        with:
+          command: baseline
+      - id: detect
+        if: steps.guard.outputs.skip != 'true'
+        uses: ./.github/actions/cli
+        with:
+          command: detect
+      - id: notice
+        if: always() && steps.guard.outputs.skip != 'true'
+        uses: ./.github/actions/cli
+        with:
+          command: notice
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.guard.outputs.skip != 'true'
+        with:
+          name: ua-prepare
+          path: .unit-agent/prepare
+          retention-days: 7
+          overwrite: true
+
+  generate:
+    needs: prepare
+    if: needs.prepare.outputs.has_work == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: {}
+    steps:
+      - uses: ./.github/actions/setup-agent
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-prepare
+          path: .unit-agent/prepare
+      - uses: ./.github/actions/cli
+        with:
+          command: generate
+          copilot-token: "${{ secrets.COPILOT_GITHUB_TOKEN }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ua-proposed
+          path: .unit-agent/generate
+          retention-days: 7
+          overwrite: true
+
+  validate1:
+    needs: [prepare, generate]
+    if: needs.prepare.outputs.has_work == 'true' && needs.generate.result == 'success'
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+    with:
+      attempt: 1
+      input-artifact: ua-proposed
+      input-dir: generate
+      input-file: generate/proposed.json
+      snapshot-artifact: ua-snapshot1
+      output-artifact: ua-validate1
+      languages: ${{ needs.prepare.outputs.languages }}
+      toolchains: ${{ needs.prepare.outputs.toolchains }}
+      config-path: ${{ inputs.config-path }}
+      agent-node-version: ${{ inputs.agent-node-version }}
+
+  repair:
+    needs: [prepare, validate1]
+    if: needs.validate1.outputs.needs_repair == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    steps:
+      - uses: ./.github/actions/setup-agent
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-prepare
+          path: .unit-agent/prepare
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-proposed
+          path: .unit-agent/generate
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-validate1
+          path: .unit-agent/validate1
+      - uses: ./.github/actions/cli
+        with:
+          command: repair
+          copilot-token: "${{ secrets.COPILOT_GITHUB_TOKEN }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ua-repaired
+          path: .unit-agent/repair
+          retention-days: 7
+          overwrite: true
+
+  validate2:
+    needs: [prepare, repair]
+    if: needs.repair.result == 'success'
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+    with:
+      attempt: 2
+      input-artifact: ua-repaired
+      input-dir: repair
+      input-file: repair/proposed.repaired.json
+      snapshot-artifact: ua-snapshot2
+      output-artifact: ua-validate2
+      languages: ${{ needs.prepare.outputs.languages }}
+      toolchains: ${{ needs.prepare.outputs.toolchains }}
+      config-path: ${{ inputs.config-path }}
+      agent-node-version: ${{ inputs.agent-node-version }}
+
+  publish:
+    needs: [prepare, generate, validate1, repair, validate2]
+    if: always() && (needs.prepare.outputs.has_work == 'true' || needs.prepare.outputs.has_notice == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+    outputs:
+      has_tests: ${{ steps.pub.outputs.has_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-agent
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-prepare
+          path: .unit-agent/prepare
+      - uses: actions/download-artifact@v4
+        if: needs.generate.result == 'success'
+        with:
+          name: ua-proposed
+          path: .unit-agent/generate
+      - uses: actions/download-artifact@v4
+        if: needs.validate1.result == 'success'
+        with:
+          name: ua-snapshot1
+          path: .unit-agent/snapshot1
+      - uses: actions/download-artifact@v4
+        if: needs.validate1.result == 'success'
+        with:
+          name: ua-validate1
+          path: .unit-agent/validate1
+      - uses: actions/download-artifact@v4
+        if: needs.repair.result == 'success'
+        with:
+          name: ua-repaired
+          path: .unit-agent/repair
+      - uses: actions/download-artifact@v4
+        if: needs.validate2.result == 'success'
+        with:
+          name: ua-snapshot2
+          path: .unit-agent/snapshot2
+      - uses: actions/download-artifact@v4
+        if: needs.validate2.result == 'success'
+        with:
+          name: ua-validate2
+          path: .unit-agent/validate2
+      - id: pub
+        uses: ./.github/actions/cli
+        with:
+          command: publish
+          github-token: "${{ github.token }}"
+          job-results: "${{ toJSON(needs) }}"
+          approval-environment: "${{ inputs.approval-environment }}"
+          approval-check: "${{ inputs.approval-check }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ua-final
+          path: .unit-agent/final
+          retention-days: 14
+          overwrite: true
+
+  approve-and-commit:
+    needs: publish
+    if: needs.publish.outputs.has_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.approval-environment }}
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: ./.github/actions/setup-agent
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-final
+          path: .unit-agent/final
+      - uses: ./.github/actions/cli
+        with:
+          command: commit
+          args: "--expected-head ${{ github.event.pull_request.head.sha }}"
+          github-token: "${{ github.token }}"
+          commit-token: "${{ secrets.COMMIT_PAT || github.token }}"
+

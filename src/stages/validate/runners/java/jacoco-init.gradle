@@ -1,0 +1,23 @@
+allprojects {
+  plugins.withId('java') {
+    apply plugin: 'jacoco'
+    if (System.getenv('UA_JACOCO_VERSION')) {
+      jacoco {
+        toolVersion = System.getenv('UA_JACOCO_VERSION')
+      }
+    }
+    tasks.withType(JacocoReport).configureEach {
+      reports {
+        try {
+          xml.required = true
+        } catch (MissingPropertyException ignored) {
+          xml.enabled = true
+        }
+      }
+    }
+    tasks.named('test') {
+      finalizedBy tasks.named('jacocoTestReport')
+    }
+  }
+}
+

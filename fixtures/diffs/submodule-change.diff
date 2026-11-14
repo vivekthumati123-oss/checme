@@ -1,0 +1,15 @@
+diff --git a/vendor/submod b/vendor/submod
+index 1111111..2222222 160000
+--- a/vendor/submod
++++ b/vendor/submod
+@@ -1 +1 @@
+-Subproject commit 1111111111111111111111111111111111111111
++Subproject commit 2222222222222222222222222222222222222222
+diff --git a/src/service.ts b/src/service.ts
+index 1111111..2222222 100644
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -8,0 +9,2 @@ export function runService(): boolean {
++  return true;
++}
+

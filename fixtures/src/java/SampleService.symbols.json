@@ -1,0 +1,81 @@
+{
+  "language": "java",
+  "filePath": "src/java/SampleService.java",
+  "hasErrors": false,
+  "tooBroken": false,
+  "isTestFile": false,
+  "isGeneratedFile": false,
+  "packageName": "com.example.billing",
+  "primaryClassName": "SampleService",
+  "imports": [
+    "java.util.List"
+  ],
+  "allSymbols": [
+    {
+      "symbolId": "com.example.billing.SampleService#SampleService(double)",
+      "qualifiedName": "SampleService.SampleService",
+      "kind": "constructor",
+      "signature": "public SampleService(double taxRate)",
+      "startLine": 8,
+      "endLine": 10,
+      "complexity": 1,
+      "executableLinesFallback": 1,
+      "exported": true,
+      "abstract": false,
+      "trivial": true,
+      "isTest": false,
+      "className": "SampleService",
+      "packageName": "com.example.billing"
+    },
+    {
+      "symbolId": "com.example.billing.SampleService#computeTotal(List<Double>)",
+      "qualifiedName": "SampleService.computeTotal",
+      "kind": "method",
+      "signature": "public double computeTotal(List<Double> items)",
+      "startLine": 12,
+      "endLine": 21,
+      "complexity": 4,
+      "executableLinesFallback": 6,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false,
+      "className": "SampleService",
+      "packageName": "com.example.billing"
+    },
+    {
+      "symbolId": "com.example.billing.SampleService#isDiscountEligible(int)",
+      "qualifiedName": "SampleService.isDiscountEligible",
+      "kind": "method",
+      "signature": "public boolean isDiscountEligible(int itemCount)",
+      "startLine": 23,
+      "endLine": 25,
+      "complexity": 1,
+      "executableLinesFallback": 1,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false,
+      "className": "SampleService",
+      "packageName": "com.example.billing"
+    }
+  ],
+  "eligibleSymbols": [
+    {
+      "symbolId": "com.example.billing.SampleService#computeTotal(List<Double>)",
+      "qualifiedName": "SampleService.computeTotal",
+      "kind": "method",
+      "signature": "public double computeTotal(List<Double> items)",
+      "startLine": 12,
+      "endLine": 21,
+      "complexity": 4,
+      "executableLinesFallback": 6,
+      "exported": true,
+      "abstract": false,
+      "trivial": false,
+      "isTest": false,
+      "className": "SampleService",
+      "packageName": "com.example.billing"
+    }
+  ]
+}

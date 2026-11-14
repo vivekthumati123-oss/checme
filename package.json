@@ -4,13 +4,27 @@
   "private": true,
   "type": "module",
   "description": "L2 programmatic extensions of GitHub Copilot custom agents, with GitHub Issues, Jira and Azure DevOps integration and an internal plugin marketplace",
+  "bin": {
+    "unit-agent": "./dist/cli.js"
+  },
   "workspaces": ["packages/node/*", "agents/node/*"],
   "scripts": {
     "validate": "node scripts/validate.js",
     "validate:strict": "node scripts/validate.js --strict",
-    "build": "node scripts/build-catalog.js",
+    "build": "node scripts/build-catalog.js && node scripts/build.mjs",
+    "build:catalog": "node scripts/build-catalog.js",
+    "build:unit-agent": "node scripts/build.mjs",
     "package": "node scripts/package.js",
-    "test": "node --test \"tests/node/**/*.test.js\" \"tests/unit/**/*.test.js\" \"tests/unit/.github/**/*.test.js\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit test/golden",
+    "test:integration": "vitest run test/integration",
+    "test:security": "node --throw-deprecation ./node_modules/vitest/vitest.mjs run test/security",
+    "test:contract": "vitest run test/contract",
+    "test:l2": "node --test \"tests/node/**/*.test.js\" \"tests/unit/**/*.test.js\" \"tests/unit/.github/**/*.test.js\"",
     "test:architectconnect": "node --test \"tests/unit/agents/node/architectconnect/**/*.test.js\" tests/node/architectconnect.integration.test.js",
     "eval": "node scripts/eval.js",
     "demo": "node scripts/demo.js",
@@ -23,8 +37,32 @@
     "agent:modplanner": "node agents/node/modplanner/src/index.js",
     "agent:requirementshub": "node agents/node/requirementshub/src/index.js",
     "agent:architectconnect": "node agents/node/architectconnect/src/index.js",
-    "check": "npm run validate && npm test && npm run eval"
+    "check": "npm run validate && npm run test:l2 && npm run eval"
   },
   "engines": { "node": "^20.19.0 || >=22.12.0" },
-  "optionalDependencies": { "@github/copilot-sdk": "1.0.16" }
+  "dependencies": {
+    "@github/copilot-sdk": "1.0.16",
+    "@octokit/graphql": "8.2.2",
+    "@octokit/rest": "21.1.1",
+    "commander": "14.0.3",
+    "execa": "9.6.1",
+    "fast-xml-parser": "5.12.1",
+    "picomatch": "4.0.7",
+    "pino": "10.4.0",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.24.7",
+    "yaml": "2.9.1",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.5",
+    "@types/picomatch": "4.0.3",
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "prettier": "3.10.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2",
+    "vitest": "4.1.12"
+  }
 }
