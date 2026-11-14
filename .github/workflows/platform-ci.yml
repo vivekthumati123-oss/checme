@@ -25,7 +25,8 @@ jobs:
       - run: npm test
       - run: npm run eval
       - run: npm run demo
-      - run: npm run package
+      - if: hashFiles('bundles.json') != ''
+        run: npm run package
 
   python:
     runs-on: ubuntu-latest
