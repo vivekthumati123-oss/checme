@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<report name="multi-pkg-sample">
+  <package name="com/example/alpha">
+    <sourcefile name="Utils.java">
+      <line nr="10" mi="0" ci="3" />
+      <line nr="11" mi="2" ci="0" />
+    </sourcefile>
+  </package>
+  <package name="com/example/beta">
+    <sourcefile name="Utils.java">
+      <line nr="20" mi="0" ci="5" />
+      <line nr="21" mi="0" ci="1" />
+    </sourcefile>
+  </package>
+</report>
+

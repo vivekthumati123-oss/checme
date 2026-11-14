@@ -5,8 +5,8 @@ __pycache__/
 .l2/
 .l2-platform/
 .unit-agent/
-dist/
-coverage/
+/dist/
+/coverage/
 .pytest_cache/
 target/
 build/
