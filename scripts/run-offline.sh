@@ -14,5 +14,11 @@ if ! command -v unshare >/dev/null 2>&1; then
   exit 125
 fi
 
+# Probe userns + netns support first (Ubuntu 24.04 AppArmor may restrict unprivileged userns).
+if ! unshare --map-root-user --net -- true >/dev/null 2>&1; then
+  echo "unit-agent: unshare self-test failed (user namespaces restricted or unsupported)" >&2
+  exit 125
+fi
+
 exec unshare --map-root-user --net -- sh -c 'ip link set lo up 2>/dev/null || true; exec "$@"' -- "$@"
 
