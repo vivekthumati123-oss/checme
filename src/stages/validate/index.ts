@@ -793,7 +793,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
     repo: manifest.repo,
     pr: manifest.pr,
     headSha: manifest.headSha,
-    headRef: process.env.GITHUB_HEAD_REF ?? "HEAD",
+    headRef: process.env.GITHUB_HEAD_REF || "HEAD",
     mode: config.mode,
     files: mergedFinalFiles,
     patchCoverage: {

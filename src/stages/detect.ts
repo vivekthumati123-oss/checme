@@ -437,8 +437,8 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
 
   const manifest = ManifestSchema.parse({
     schemaVersion: 1,
-    runId: opts.runId ?? process.env.GITHUB_RUN_ID ?? "local-run",
-    repo: opts.repoFullName ?? process.env.GITHUB_REPOSITORY ?? "local/repo",
+    runId: opts.runId || process.env.GITHUB_RUN_ID || "local-run",
+    repo: opts.repoFullName || process.env.GITHUB_REPOSITORY || "local/repo",
     pr: opts.prNumber ?? 0,
     baseSha: opts.baseSha ?? resolved.baseSha,
     headSha: opts.headSha ?? resolved.headSha,

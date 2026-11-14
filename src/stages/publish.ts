@@ -333,11 +333,11 @@ async function assembleFinalFromSnapshots(params: {
 
   const finalArtifact = FinalSchema.parse({
     schemaVersion: 1,
-    runId: params.manifest?.runId ?? process.env.GITHUB_RUN_ID ?? "local-run",
-    repo: params.manifest?.repo ?? process.env.GITHUB_REPOSITORY ?? "unknown/unknown",
+    runId: params.manifest?.runId || process.env.GITHUB_RUN_ID || "local-run",
+    repo: params.manifest?.repo || process.env.GITHUB_REPOSITORY || "unknown/unknown",
     pr: params.manifest?.pr ?? 0,
     headSha: params.manifest?.headSha ?? snap1?.headSha ?? snap2?.headSha ?? "unknown",
-    headRef: process.env.GITHUB_HEAD_REF ?? "HEAD",
+    headRef: process.env.GITHUB_HEAD_REF || "HEAD",
     mode: params.config.mode,
     files: finalFiles,
     patchCoverage: {
@@ -497,7 +497,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
 
   const reqCheck = validateRequiredInputs(opts.workDir, jobResults, Boolean(opts.report && opts.finalArtifact));
   if (!reqCheck.ok) {
-    const repoStr = opts.repoFullName ?? manifest?.repo ?? process.env.GITHUB_REPOSITORY ?? "unknown/unknown";
+    const repoStr = opts.repoFullName || manifest?.repo || process.env.GITHUB_REPOSITORY || "unknown/unknown";
     const prNum = opts.prNumber ?? manifest?.pr ?? 0;
     const headSha = opts.headSha ?? manifest?.headSha ?? "unknown";
     const failMsg = `\`${reqCheck.missingArtifact}\` was expected from \`${reqCheck.failingJob}\` but was missing or invalid; check the \`${reqCheck.failingJob}\` job logs.`;
@@ -517,11 +517,11 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     const softReason = `missing_required_input:${reqCheck.missingArtifact}`;
     const emptyFinal = FinalSchema.parse({
       schemaVersion: 1,
-      runId: manifest?.runId ?? process.env.GITHUB_RUN_ID ?? "unknown",
+      runId: manifest?.runId || process.env.GITHUB_RUN_ID || "unknown",
       repo: repoStr,
       pr: prNum,
       headSha,
-      headRef: process.env.GITHUB_HEAD_REF ?? "HEAD",
+      headRef: process.env.GITHUB_HEAD_REF || "HEAD",
       mode: "report",
       files: [],
       patchCoverage: { beforePct: null, projectedPct: null, targetPct: config.targets.patchCoverage },
@@ -546,7 +546,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
 
   if (!hasValidationOutputs && existsSync(prepareNoticePath)) {
     const noticeText = readFileSync(prepareNoticePath, "utf8").trim();
-    const repoStr = opts.repoFullName ?? manifest?.repo ?? process.env.GITHUB_REPOSITORY ?? "unknown/unknown";
+    const repoStr = opts.repoFullName || manifest?.repo || process.env.GITHUB_REPOSITORY || "unknown/unknown";
     const prNum = opts.prNumber ?? manifest?.pr ?? 0;
     const headSha = opts.headSha ?? manifest?.headSha ?? "unknown";
     const markdown = truncateCommentMarkdown(`${buildCommentMarker(headSha)}\n${noticeText}\n`);
@@ -560,11 +560,11 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     }
     const noticeFinal = FinalSchema.parse({
       schemaVersion: 1,
-      runId: manifest?.runId ?? process.env.GITHUB_RUN_ID ?? "unknown",
+      runId: manifest?.runId || process.env.GITHUB_RUN_ID || "unknown",
       repo: repoStr,
       pr: prNum,
       headSha,
-      headRef: process.env.GITHUB_HEAD_REF ?? "HEAD",
+      headRef: process.env.GITHUB_HEAD_REF || "HEAD",
       mode: "report",
       files: [],
       patchCoverage: { beforePct: null, projectedPct: null, targetPct: config.targets.patchCoverage },
