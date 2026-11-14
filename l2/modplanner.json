@@ -1,0 +1,16 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "modplanner",
+  "displayName": "ModPlanner",
+  "version": "1.0.0",
+  "description": "Generates validated modernization plans and approval-gated Jira epics and stories.",
+  "owner": "Microsoft IBU AI Platform",
+  "status": "active",
+  "agent": ".github/agents/modplanner.agent.md",
+  "skills": ["work-items", "l2-platform-runner"],
+  "hooks": ["l2-guardrails", "l2-audit"],
+  "policy": "configurations/policies/modplanner.yaml",
+  "runtime": { "language": "node", "model": "gpt-5", "entrypoint": "agents/node/modplanner/src/index.js", "package": "@l2/agent-modplanner", "trigger": "workflow_dispatch", "workflow": ".github/workflows/modplanner-dispatch.yml" },
+  "config": { "workItemProvider": "jira" },
+  "evals": "evals/modplanner"
+}

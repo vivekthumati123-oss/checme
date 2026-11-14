@@ -1,0 +1,33 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "codeconnect",
+  "displayName": "CodeConnect",
+  "version": "1.3.0",
+  "description": "Implements a GitHub, Jira or Azure DevOps work item and opens a draft pull request linked back to it.",
+  "owner": "Shireesha",
+  "phase": "Phase 1: Quick Wins (W1-4)",
+  "status": "active",
+  "agent": ".github/agents/code-agent.agent.md",
+  "skills": [
+    "work-items"
+  ],
+  "hooks": [
+    "l2-guardrails",
+    "l2-audit"
+  ],
+  "policy": "configurations/policies/codeconnect.yaml",
+  "runtime": {
+    "language": "node",
+    "model": "gpt-5",
+    "entrypoint": "agents/node/codeconnect/src/index.js",
+    "package": "@l2/agent-codeconnect",
+    "trigger": "workflow_dispatch (dry-run by default)",
+    "workflow": ".github/workflows/codeconnect-dispatch.yml"
+  },
+  "config": {
+    "writeMode": "pull-request",
+    "maxFilesPerRun": 15,
+    "maxContextFiles": 8,
+    "linkPullRequest": true
+  }
+}

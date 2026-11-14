@@ -1,0 +1,11 @@
+{
+  "action": "opened",
+  "sender": { "id": 4242, "login": "karthik-aditya", "type": "User" },
+  "repository": { "name": "sample-service", "default_branch": "main", "owner": { "login": "techm-microsoft-ibu" } },
+  "pull_request": {
+    "number": 128, "title": "Add interest calculation for consumer lending",
+    "base": { "ref": "main", "sha": "base1111111111111111111111111111111111111" },
+    "head": { "ref": "feature/interest-calc", "sha": "head2222222222222222222222222222222222222" },
+    "user": { "login": "karthik-aditya" }, "labels": []
+  }
+}

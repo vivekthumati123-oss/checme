@@ -1,0 +1,22 @@
+{
+  "metrics": [
+    { "date": "2026-08-25", "total_active_users": 5, "total_code_suggestions": 5120, "total_code_acceptances": 1480 },
+    { "date": "2026-08-26", "total_active_users": 5, "total_code_suggestions": 6010, "total_code_acceptances": 1802 },
+    { "date": "2026-08-27", "total_active_users": 4, "total_code_suggestions": 5740, "total_code_acceptances": 1611 },
+    { "date": "2026-08-28", "total_active_users": 4, "total_code_suggestions": 4380, "total_code_acceptances": 1090 },
+    { "date": "2026-08-29", "total_active_users": 3, "total_code_suggestions": 3990, "total_code_acceptances": 1204 }
+  ],
+  "seats": {
+    "total_seats": 8,
+    "seats": [
+      { "assignee": { "login": "dev-01" }, "last_activity_at": "2026-08-29T10:12:00Z" },
+      { "assignee": { "login": "dev-02" }, "last_activity_at": "2026-08-29T09:02:00Z" },
+      { "assignee": { "login": "dev-03" }, "last_activity_at": "2026-08-28T16:41:00Z" },
+      { "assignee": { "login": "dev-04" }, "last_activity_at": "2026-08-12T11:20:00Z" },
+      { "assignee": { "login": "dev-05" }, "last_activity_at": "2026-08-06T08:05:00Z" },
+      { "assignee": { "login": "eltp-01" }, "last_activity_at": "2026-06-30T08:05:00Z" },
+      { "assignee": { "login": "eltp-02" }, "last_activity_at": null },
+      { "assignee": { "login": "eltp-03" }, "last_activity_at": null }
+    ]
+  }
+}

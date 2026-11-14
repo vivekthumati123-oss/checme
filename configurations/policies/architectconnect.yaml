@@ -1,0 +1,19 @@
+rules:
+  - action: repository.read
+    effect: allow
+  - action: work-item.read
+    effect: allow
+  - action: file.write
+    effect: allow
+    conditions:
+      paths: ["docs/hld/**"]
+  - action: commit.create
+    effect: deny
+  - action: pull-request.create
+    effect: deny
+  - action: work-item.create
+    effect: require-approval
+  - action: work-item.comment
+    effect: require-approval
+  - action: work-item.link
+    effect: require-approval

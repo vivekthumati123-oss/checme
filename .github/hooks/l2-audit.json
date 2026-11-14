@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node .github/hooks/scripts/audit-log.mjs",
+        "powershell": "node .github/hooks/scripts/audit-log.mjs",
+        "cwd": ".",
+        "timeoutSec": 5,
+        "env": {
+          "HOOK_EVENT": "sessionStart"
+        }
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node .github/hooks/scripts/audit-log.mjs",
+        "powershell": "node .github/hooks/scripts/audit-log.mjs",
+        "cwd": ".",
+        "timeoutSec": 5,
+        "env": {
+          "HOOK_EVENT": "postToolUse"
+        }
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node .github/hooks/scripts/audit-log.mjs",
+        "powershell": "node .github/hooks/scripts/audit-log.mjs",
+        "cwd": ".",
+        "timeoutSec": 5,
+        "env": {
+          "HOOK_EVENT": "sessionEnd"
+        }
+      }
+    ],
+    "errorOccurred": [
+      {
+        "type": "command",
+        "bash": "node .github/hooks/scripts/audit-log.mjs",
+        "powershell": "node .github/hooks/scripts/audit-log.mjs",
+        "cwd": ".",
+        "timeoutSec": 5,
+        "env": {
+          "HOOK_EVENT": "errorOccurred"
+        }
+      }
+    ]
+  }
+}

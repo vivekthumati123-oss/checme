@@ -1,0 +1,11 @@
+{
+  "id": "valid-fsd",
+  "description": "Generates source-grounded structured FSD with traceability",
+  "input": {
+    "payload": { "mode": "generate", "epicKey": "APP-1" },
+    "epic": { "type": "Epic", "title": "Approval", "description": "Source" },
+    "children": [{ "id": "jira:APP-2", "title": "Approval", "description": "Source" }]
+  },
+  "replay": { "purposeScope": "Scope", "epicOverview": "Approval", "requirements": [{ "frId": "FR-001", "jiraKey": "APP-2", "title": "Approval", "description": "Source", "acceptanceCriteria": [], "businessRules": [], "dependencies": [] }], "nonFunctionalConsiderations": [], "assumptions": [], "openQuestions": [{ "id": "Q1", "frIds": ["FR-001"], "text": "How many levels?", "field": "businessRules" }] },
+  "expect": { "status": "succeeded", "runtimeCalls": 1, "requirementCount": 1, "workItemWrites": 0 }
+}

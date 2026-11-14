@@ -1,0 +1,35 @@
+# TestGen may only write test files. Hooks add a second, content-aware layer.
+agent: testgen
+rules:
+  - action: repository.read
+    effect: allow
+  - action: pull-request.comment
+    effect: allow
+  - action: check.publish
+    effect: allow
+  - action: file.write
+    effect: allow
+    conditions:
+      paths:
+        - tests/**
+        - test/**
+        - src/**/__tests__/**
+        - "**/*.test.js"
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+        - "**/test_*.py"
+        - "**/*Test.java"
+  - action: file.write
+    effect: deny
+    conditions:
+      paths:
+        - .github/**
+        - infrastructure/**
+        - "**/*.env"
+    reason: TestGen must never modify pipelines, infrastructure or secrets
+  - action: commit.create
+    effect: require-approval
+  - action: command.execute
+    effect: allow
+    conditions:
+      commands: [npm test, pnpm test, pytest, mvn test, dotnet test]

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentResult",
+  "type": "object",
+  "required": ["requestId", "agentId", "status", "summary", "artifacts", "metrics"],
+  "properties": {
+    "status": { "enum": ["succeeded", "failed", "skipped", "requires_approval"] },
+    "metrics": { "type": "object", "properties": { "model": { "type": ["string", "null"] } } }
+  }
+}

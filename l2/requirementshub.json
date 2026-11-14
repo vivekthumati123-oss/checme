@@ -1,0 +1,30 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "requirementshub",
+  "displayName": "RequirementsHub",
+  "version": "1.0.0",
+  "description": "Generates traceable FSDs from Jira epics and preserves drafts when applying confirmed BA answers.",
+  "owner": "Pravalika",
+  "phase": "Phase 2: Core Platform (W5-10)",
+  "status": "active",
+  "agent": ".github/agents/fsd-agent.agent.md",
+  "skills": [
+    "work-items",
+    "l2-platform-runner"
+  ],
+  "hooks": [
+    "l2-guardrails",
+    "l2-audit"
+  ],
+  "policy": "configurations/policies/requirementshub.yaml",
+  "runtime": {
+    "language": "node",
+    "model": "gpt-4.1",
+    "entrypoint": "agents/node/requirementshub/src/index.js",
+    "package": "@l2/agent-requirementshub",
+    "trigger": "workflow_dispatch",
+    "workflow": ".github/workflows/requirementshub-dispatch.yml"
+  },
+  "config": { "workItemProvider": "jira" },
+  "evals": "evals/requirementshub"
+}

@@ -1,0 +1,67 @@
+{
+  "id": "interest-calc-jest",
+  "description": "Happy path: one JS source file produces an AAA Jest file under tests/unit.",
+  "input": {
+    "pullRequest": {
+      "number": 128,
+      "title": "Add interest calculation",
+      "headBranch": "feature/interest",
+      "headSha": "head-sha"
+    },
+    "changedFiles": [
+      {
+        "path": "src/lending/interest.js",
+        "status": "modified"
+      },
+      {
+        "path": "README.md",
+        "status": "modified"
+      }
+    ],
+    "files": {
+      "src/lending/interest.js": "export function calculateInterest(principal, annualRate, years) {\n  if (principal <= 0) throw new RangeError(\"principal must be positive\");\n  return principal * (1 + annualRate / 100) ** years - principal;\n}\n"
+    }
+  },
+  "replay": {
+    "framework": "jest",
+    "files": [
+      {
+        "path": "tests/unit/lending/interest.test.js",
+        "sourcePath": "src/lending/interest.js",
+        "casesGenerated": 3,
+        "content": "import { calculateInterest } from \"../../../src/lending/interest.js\";\n\ndescribe(\"calculateInterest\", () => {\n  it(\"compounds interest over whole years\", () => {\n    // Arrange\n    const principal = 100000;\n\n    // Act\n    const interest = calculateInterest(principal, 10, 2);\n\n    // Assert\n    expect(interest).toBeCloseTo(21000);\n  });\n\n  it(\"returns zero interest for a zero rate\", () => {\n    // Arrange\n    const principal = 50000;\n\n    // Act\n    const interest = calculateInterest(principal, 0, 5);\n\n    // Assert\n    expect(interest).toBe(0);\n  });\n\n  it(\"rejects a non-positive principal\", () => {\n    // Arrange\n    const principal = 0;\n\n    // Act\n    const act = () => calculateInterest(principal, 10, 1);\n\n    // Assert\n    expect(act).toThrow(RangeError);\n  });\n});\n"
+      }
+    ],
+    "skipped": [],
+    "summary": "Generated 3 tests."
+  },
+  "expect": {
+    "status": "succeeded",
+    "framework": "jest",
+    "minTestsGenerated": 3,
+    "acceptedPathsMatch": [
+      "tests/**"
+    ],
+    "promptIncludes": [
+      "instructions:unit-testing",
+      "instructions:javascript",
+      "reference:aaa-unit-tests/references/jest.md"
+    ],
+    "promptExcludes": [
+      "reference:aaa-unit-tests/references/pytest.md",
+      "instructions:python"
+    ],
+    "contentMustMatch": [
+      "describe\\(",
+      "expect\\(",
+      "// Arrange",
+      "// Act",
+      "// Assert"
+    ],
+    "contentMustNotMatch": [
+      "\\.only\\(",
+      "\\.skip\\(",
+      "console\\.log"
+    ]
+  }
+}

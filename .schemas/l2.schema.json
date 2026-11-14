@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "L2 agent binding (l2/<id>.json)",
+  "type": "object",
+  "required": ["name", "version", "description", "status", "agent", "runtime"],
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z0-9-]{1,64}$" },
+    "displayName": { "type": "string" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+" },
+    "description": { "type": "string", "minLength": 10, "maxLength": 300 },
+    "owner": { "type": "string" },
+    "phase": { "type": "string" },
+    "status": { "enum": ["draft", "planned", "active", "deprecated"] },
+    "agent": { "type": "string", "pattern": "\\.agent\\.md$" },
+    "skills": { "type": "array", "items": { "type": "string" } },
+    "hooks": { "type": "array", "items": { "type": "string" } },
+    "policy": { "type": "string" },
+    "runtime": {
+      "type": "object",
+      "required": ["language", "entrypoint"],
+      "properties": {
+        "language": { "enum": ["node", "python"] },
+        "model": { "type": "string" },
+        "entrypoint": { "type": "string" },
+        "package": { "type": "string" },
+        "module": { "type": "string" },
+        "trigger": { "type": "string" },
+        "workflow": { "type": "string" }
+      }
+    },
+    "config": { "type": "object" },
+    "evals": { "type": "string" }
+  }
+}

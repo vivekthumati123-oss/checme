@@ -1,0 +1,42 @@
+name: CodeConnect
+
+on:
+  workflow_dispatch:
+    inputs:
+      work-item-id:
+        description: "CodeConnect: ado:123 | jira:PROJ-1 | github:#12"
+        required: true
+        type: string
+       
+      implementation-plan-path:        
+          description: "Path to implementation plan JSON"
+          required: false
+          default: ""
+          type: string
+
+      dry-run:
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: write
+  issues: write
+
+jobs:
+  codeconnect:
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      issues: write
+    uses: ./.github/workflows/_agent-node-reusable.yml
+    with:
+      agent: codeconnect
+      package: "@l2/agent-codeconnect"
+      runtime: copilot
+      dry-run: ${{ inputs.dry-run }}
+      work-item-id: ${{ inputs.work-item-id }}
+      implementation-plan-path: ${{ inputs.implementation-plan-path }}
+    secrets: inherit

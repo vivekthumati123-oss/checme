@@ -1,0 +1,9 @@
+{
+  "id": "valid-plan",
+  "description": "Generates a complete validated plan without work-item writes",
+  "input": {
+    "payload": { "mode": "plan", "runId": "eval", "assessment": { "application": "eval-app", "currentStack": {}, "targetStack": {}, "modules": [{ "id": "core", "description": "Core", "linesOfCode": 100, "issues": [], "dependsOn": [] }] } }
+  },
+  "replay": { "plan": { "application": "eval-app", "summary": "Upgrade core", "modules": [{ "id": "core", "order": 1, "dependsOn": [], "riskScore": 2, "riskReason": "Small", "effortDays": 1, "tasks": ["Upgrade"], "status": "pending" }] } },
+  "expect": { "status": "succeeded", "runtimeCalls": 1, "planModuleCount": 1, "workItemWrites": 0 }
+}

@@ -1,0 +1,21 @@
+{
+  "epic": "KAN-14",
+  "stories": [
+    {
+      "key": "KAN-15",
+      "summary": "1. Migrate common-utils"
+    },
+    {
+      "key": "KAN-16",
+      "summary": "2. Migrate customer-service"
+    },
+    {
+      "key": "KAN-17",
+      "summary": "3. Migrate reporting"
+    },
+    {
+      "key": "KAN-18",
+      "summary": "4. Migrate order-service"
+    }
+  ]
+}

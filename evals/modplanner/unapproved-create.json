@@ -1,0 +1,7 @@
+{
+  "id": "unapproved-create",
+  "description": "No work-item writes when explicit approval is absent",
+  "input": { "dryRun": false, "payload": { "mode": "create", "runId": "eval", "project": "APP" } },
+  "replay": {},
+  "expect": { "status": "failed", "runtimeCalls": 0, "workItemWrites": 0 }
+}

@@ -1,0 +1,23 @@
+# Fallback policy. Anything not listed is denied.
+rules:
+  - action: repository.read
+    effect: allow
+  - action: work-item.read
+    effect: allow
+  - action: pull-request.comment
+    effect: allow
+  - action: check.publish
+    effect: allow
+  - action: file.write
+    effect: deny
+    reason: Write access must be granted explicitly per agent
+  - action: commit.create
+    effect: require-approval
+  - action: pull-request.create
+    effect: require-approval
+  - action: work-item.create
+    effect: require-approval
+  - action: work-item.comment
+    effect: require-approval
+  - action: work-item.link
+    effect: require-approval

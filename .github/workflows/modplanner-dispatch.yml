@@ -1,0 +1,29 @@
+name: ModPlanner
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [plan, preview, create, link]
+        default: plan
+      run-id: { type: string, required: true, description: 'Isolated state ID; never reset receipts' }
+      assessment-path: { type: string, description: 'Application-relative assessment JSON; empty uses platform sample' }
+      source-run-id: { type: string, description: 'Completed workflow run containing reviewed preview/state' }
+      preview-digest: { type: string, description: 'Reviewed SHA-256 digest; required for create' }
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  modplanner:
+    uses: ./.github/workflows/_agent-planning-reusable.yml
+    with:
+      agent: modplanner
+      operation: ${{ inputs.operation }}
+      state-id: ${{ inputs.run-id }}
+      assessment-path: ${{ inputs.assessment-path }}
+      source-run-id: ${{ inputs.source-run-id }}
+      preview-digest: ${{ inputs.preview-digest }}
+    secrets: inherit

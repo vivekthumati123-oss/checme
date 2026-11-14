@@ -1,0 +1,19 @@
+{
+  "name": "@l2/agent-architectconnect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/architectconnect-agent.js",
+    "./engine": "./src/engine/services/architectConnectService.js"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.0",
+    "@l2/agent-core": "*",
+    "@l2/agent-runtime": "*"
+  },
+  "optionalDependencies": {
+    "mermaid": "11.17.2",
+    "jsdom": "26.1.0"
+  }
+}

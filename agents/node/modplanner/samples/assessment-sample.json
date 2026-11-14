@@ -1,0 +1,46 @@
+{
+  "application": "legacy-orders-app",
+  "currentStack": {
+    "language": "Java",
+    "languageVersion": "8",
+    "framework": "Spring Boot",
+    "frameworkVersion": "1.5",
+    "buildTool": "Maven"
+  },
+  "targetStack": {
+    "language": "Java",
+    "languageVersion": "17",
+    "framework": "Spring Boot",
+    "frameworkVersion": "3.2"
+  },
+  "modules": [
+    {
+      "id": "common-utils",
+      "description": "Shared helper classes used by all other modules",
+      "linesOfCode": 3000,
+      "dependsOn": [],
+      "issues": ["Uses deprecated Date and Calendar classes"]
+    },
+    {
+      "id": "customer-service",
+      "description": "Customer data and profile APIs",
+      "linesOfCode": 8000,
+      "dependsOn": ["common-utils"],
+      "issues": ["Uses javax.* imports", "Old Spring Security config"]
+    },
+    {
+      "id": "order-service",
+      "description": "Order creation and payment flow",
+      "linesOfCode": 15000,
+      "dependsOn": ["common-utils", "customer-service"],
+      "issues": ["Uses javax.* imports", "Custom XML-based bean config", "Hibernate 4 queries"]
+    },
+    {
+      "id": "reporting",
+      "description": "Nightly sales reports",
+      "linesOfCode": 5000,
+      "dependsOn": ["common-utils"],
+      "issues": ["Uses removed JAXB APIs"]
+    }
+  ]
+}

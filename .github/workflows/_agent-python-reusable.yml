@@ -1,0 +1,65 @@
+name: Reusable Python Agent
+
+on:
+  workflow_call:
+    inputs:
+      agent: { required: true, type: string }
+      module: { description: "Python module, e.g. agents.python.finops.main", required: true, type: string }
+      runtime: { type: string, default: copilot }
+      platform-repository: { type: string, default: "" }
+      platform-ref: { type: string, default: main }
+      python-version: { type: string, default: "3.12" }
+    secrets:
+      COPILOT_GITHUB_TOKEN: { required: false }
+      COPILOT_METRICS_TOKEN: { required: false }
+      L2_PLATFORM_TOKEN: { required: false }
+
+permissions:
+  contents: read
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout L2 platform
+        if: inputs.platform-repository != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: .l2-platform
+          token: ${{ secrets.L2_PLATFORM_TOKEN || github.token }}
+      - name: Resolve platform root
+        run: |
+          if [ -n "${{ inputs.platform-repository }}" ]; then root="$GITHUB_WORKSPACE/.l2-platform"; else root="$GITHUB_WORKSPACE"; fi
+          echo "L2_ROOT=$root" >> "$GITHUB_ENV"
+          echo "L2_AUDIT_LOG=$GITHUB_WORKSPACE/.l2/audit.jsonl" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Copilot SDK
+        if: inputs.runtime == 'copilot'
+        run: |
+          pip install github-copilot-sdk
+          python -m copilot download-runtime
+      - name: Run agent
+        working-directory: ${{ env.L2_ROOT }}
+        env:
+          PYTHONPATH: packages/python:.
+          AGENT_RUNTIME: ${{ inputs.runtime }}
+          GITHUB_ORG: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.COPILOT_METRICS_TOKEN || secrets.GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: python -m ${{ inputs.module }}
+      - name: Upload audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.agent }}-audit-${{ github.run_id }}
+          path: .l2/audit.jsonl
+          if-no-files-found: ignore

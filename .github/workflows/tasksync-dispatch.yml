@@ -1,0 +1,34 @@
+name: TaskSync
+
+on:
+  workflow_dispatch:
+    inputs:
+      story-id:
+        description: "Story: ado:123 | jira:PROJ-1 | github:#12"
+        required: true
+        type: string
+      dry-run:
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: write
+  issues: write
+
+jobs:
+  tasksync:
+    permissions:
+      contents:  write
+      issues: write
+      pull-requests: write
+      checks: write
+    uses: ./.github/workflows/_agent-node-reusable.yml
+    with:
+      agent: tasksync
+      package: "@l2/agent-tasksync"
+      runtime: copilot
+      dry-run: ${{ inputs.dry-run }}
+      story-id: ${{ inputs.story-id }}
+    secrets: inherit

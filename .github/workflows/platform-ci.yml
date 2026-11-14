@@ -1,0 +1,45 @@
+name: Platform CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --no-audit --no-fund
+      - run: npm run validate
+      - name: Catalog is up to date
+        run: |
+          npm run build
+          git diff --exit-code docs/CATALOG.md || (echo "Run npm run build and commit docs/CATALOG.md" && exit 1)
+      - run: npm test
+      - run: npm run eval
+      - run: npm run demo
+      - run: npm run package
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python dependencies
+        run: pip install -e .
+      - name: Run Python tests
+        env:
+          PYTHONPATH: packages/python:.
+        run: python -m unittest discover -s tests/python -v

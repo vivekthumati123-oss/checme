@@ -1,0 +1,142 @@
+name: Reusable Node Agent
+
+# Callable from this repo or from any application repo:
+#   uses: <org>/l2-agent-platform/.github/workflows/_agent-node-reusable.yml@v1.3.0
+on:
+  workflow_call:
+    inputs:
+      agent: { description: "L2 agent id (l2/<id>.json)", required: true, type: string }
+      package: { description: "Workspace package, e.g. @l2/agent-testgen", required: true, type: string }
+      runtime: { description: "mock | copilot", type: string, default: copilot }
+      dry-run: { type: boolean, default: false }
+      pr-number: { description: "Pull request number for artifact naming", type: number, default: 0 }
+      work-item-id: { description: "CodeConnect: ado:123 | jira:PROJ-1 | github:#12", type: string, default: "" }
+      story-id: { description: "TaskSync: ado:123 | jira:PROJ-1 | github:#12", type: string, default: "" }
+      platform-repository: { description: "owner/repo of the L2 platform; empty = caller is the platform", type: string, default: "" }
+      platform-ref: { type: string, default: main }
+      node-version: { type: string, default: "22" }
+      implementation-plan-path: { description: "Path to implementation plan JSON", type: string, default: "" }
+      input-artifact-name:
+        type: string
+        default: ""
+
+      input-artifact-dir:
+        type: string
+        default: "handoff"
+
+      output-artifact-name:
+        type: string
+        default: ""
+
+      output-artifact-path:
+        type: string
+        default: ""
+    secrets:
+      COPILOT_GITHUB_TOKEN: { required: false }
+      L2_PLATFORM_TOKEN: { required: false }
+      ADO_PAT: { required: false }
+      JIRA_EMAIL: { required: false }
+      JIRA_API_TOKEN: { required: false }
+      JIRA_PAT: { required: false }
+
+permissions:
+  contents: read
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      issues: write
+    concurrency:
+      group: ${{ inputs.agent }}-${{ github.repository }}-${{ github.event.pull_request.number || inputs.work-item-id || inputs.story-id || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout calling repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Checkout L2 platform
+        if: inputs.platform-repository != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: .l2-platform
+          token: ${{ secrets.L2_PLATFORM_TOKEN || github.token }}
+      - name: Resolve platform root
+        run: |
+          if [ -n "${{ inputs.platform-repository }}" ]; then root="$GITHUB_WORKSPACE/.l2-platform"; else root="$GITHUB_WORKSPACE"; fi
+          echo "L2_ROOT=$root" >> "$GITHUB_ENV"
+          echo "L2_AUDIT_LOG=$GITHUB_WORKSPACE/.l2/audit.jsonl" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Install workspaces
+        working-directory: ${{ env.L2_ROOT }}
+        run: npm install --no-audit --no-fund
+      - name: Install Copilot SDK
+        if: inputs.runtime == 'copilot'
+        working-directory: ${{ env.L2_ROOT }}
+        run: npm install --no-save @github/copilot-sdk@1.0.16
+      - name: Validate customisations
+        working-directory: ${{ env.L2_ROOT }}
+        run: npm run validate
+      - name: Download handoff artifact
+        if: inputs.input-artifact-name != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.input-artifact-name }}
+          path: ${{ inputs.input-artifact-dir }}
+      - name: Run agent
+        working-directory: ${{ env.L2_ROOT }}
+        env:
+          AGENT_RUNTIME: ${{ inputs.runtime }}
+          AGENT_DRY_RUN: ${{ inputs.dry-run }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WORK_ITEM_ID: ${{ inputs.work-item-id }}
+          IMPLEMENTATION_PLAN_PATH: ${{ inputs.implementation-plan-path != '' && (startsWith(inputs.implementation-plan-path, '/') && inputs.implementation-plan-path || format('{0}/{1}', github.workspace, inputs.implementation-plan-path)) || '' }}
+          IMPLEMENTATION_PLAN_OUTPUT_PATH: ${{ inputs.output-artifact-path != '' && (startsWith(inputs.output-artifact-path, '/') && inputs.output-artifact-path || format('{0}/{1}', github.workspace, inputs.output-artifact-path)) || '' }}
+          STORY_ID: ${{ inputs.story-id }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          # Work items: settings as repository/org variables, credentials as secrets.
+          WORK_ITEM_PROVIDER: ${{ vars.WORK_ITEM_PROVIDER }}
+          WORK_ITEMS_GITHUB_REPO: ${{ vars.WORK_ITEMS_GITHUB_REPO || github.repository }}
+          ADO_ORG_URL: ${{ vars.ADO_ORG_URL }}
+          ADO_PROJECT: ${{ vars.ADO_PROJECT }}
+          ADO_PAT: ${{ secrets.ADO_PAT }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ vars.JIRA_PROJECT }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PAT: ${{ secrets.JIRA_PAT }}
+        run: npm run --workspace ${{ inputs.package }} start
+      - name: Upload handoff artifact
+        if: success() && inputs.output-artifact-path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.output-artifact-name }}
+          path: ${{ inputs.output-artifact-path }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.agent }}-audit-${{ github.run_id }}
+          path: .l2/audit.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload generated unit tests
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.agent }}-tests-pr-${{ inputs.pr-number }}-run-${{ github.run_attempt }}
+          path: ${{ env.L2_ROOT }}/.l2/generated-tests/
+          if-no-files-found: ignore
+          retention-days: 14

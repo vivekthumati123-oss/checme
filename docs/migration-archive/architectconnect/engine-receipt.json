@@ -1,0 +1,179 @@
+{
+  "sourceRoot": "Architect Connect",
+  "targetRoot": "agents/node/architectconnect/src/engine",
+  "files": [
+    {
+      "source": "repositoryScanner.js",
+      "sha256": "e71863700fab6d93bc01a0c951503a512182e0fe8d82e16cb67f92bb9e30bc32",
+      "migratedSha256": "e703ae53d59d3822f2b44a1bb0d4e393ffbe4071e0a3616c44f2844e14fb4f84",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "hldGenerator.js",
+      "sha256": "7596d3ca4e6214c9a5c75901cabe871c84784af4343eb713aca1cb00024180c3",
+      "migratedSha256": "2958fc0acc6f93d6148005ec2decceee6955a0a7aac9092fc05443f751ea5e50",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "structurizrGenerator.js",
+      "sha256": "ac6fe370b4985076ae33d806c9a99053f95c3ec36b88ae78da3024ec998ed39f",
+      "migratedSha256": "b0b8be4ccde42251795f244350aad64d38f04ceae8cee9f242586bcfced12fea",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "adrGenerator.js",
+      "sha256": "9175f124911a7a19c0abed9ec908bf2e99ad4aa38e93dde8af4812ff5fd856e2",
+      "migratedSha256": "a63fc92307f9f1629a2b66f8cc8bcfb174596a4de58e3432092e67c9b5172d9c",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/bicepAnalyzer.js",
+      "sha256": "bdef0e02594af92b7c64d5390327608a18d127a77ccb9f12386e32a681526f9f",
+      "migratedSha256": "b3046ff0c73b0168076135ab1211e9c0ba42f126b3323856bab746273f0fa12f",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/dependencies/javascriptImportAnalyzer.js",
+      "sha256": "138b6a8e02450b5267b2e5ffdf2d03345dacdd0422e62944aeb831c06c37a6bd",
+      "migratedSha256": "060d93e2603d6bd75230ea2cd9b0e60185c6a6efde0a66166a0a71856bc72f6a",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/dependencies/pythonImportAnalyzer.js",
+      "sha256": "e49b2515c00335f10305b76badde800fa84e55a50d61345bf754dc0d544bde24",
+      "migratedSha256": "b21fec7ad173582fb25c34bb4fc5f2a14f4d5a79156ff356fc4ff8870edad396",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/apiComponentRelationshipDiscovery.js",
+      "sha256": "3bd397554f8ba0229bd63914c9b392ecd048db68eba4a7966e1ecc5725f6cd67",
+      "migratedSha256": "2b0fbd5401402f8c84e46cbb14df7277e92375b3e0f87b6debc1e48a144741f2",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/apiDiscovery.js",
+      "sha256": "950d9315004430dce1bea06b9b0de6ba8116bfc0f337d5dff123dcaf6662d2e5",
+      "migratedSha256": "07dbe74d3de9a641550191d5ec7f5652908cd310e8060d3733f89b931fc9f064",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/applicationDiscovery.js",
+      "sha256": "a68f66b120314d2d49d8d3ba0974626cbc6dc7d2c838bf3d6feb54ddab551d5b",
+      "migratedSha256": "d8106fed95d58a1655b802a7a216d621e999c4d340bf5c2f08d3044de9636d61",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/architectureProjection.js",
+      "sha256": "e5e12bc69be5a46823571f5ffdff58626d76efad4422ebae57f0d9eff2d28d76",
+      "migratedSha256": "47798d3d6a305f88b1b8b5c64915e19e904d2ac6f2f5964b30090f49de5c9f79",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/architectureSelector.js",
+      "sha256": "53045ec721e6d46b5a11387b3fae252a4017651ed455b4ef30050ce5ad5b3068",
+      "treatment": "manually adapted and tested"
+    },
+    {
+      "source": "analyzers/discovery/componentDiscovery.js",
+      "sha256": "aff5345464e26d035aebe1b91b8f4554adb0badbc9ea883730e34e9b067d6389",
+      "migratedSha256": "411a17311f823a42fa8135b6ffedf795a1cbec16babf963a9030039dbfaebc33",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/pathUtils.js",
+      "sha256": "f64dece208f6d8c8666cde29132e98a52591c19bf5b85201d65bc0ba8d003b11",
+      "migratedSha256": "95fdd82d6f736f202092abd114ad7c6d501d059c69b91040b2e0445aa1fdf4f3",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/discovery/technologyDiscovery.js",
+      "sha256": "18b208382bd600300af6e41576c7f796ebd9e0211dbd28b46df115e612862681",
+      "migratedSha256": "dd3bc2abfed9d7d7c1aeab8f9155d0cc627d44218566786394f34a55a08b7663",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/dockerAnalyzer.js",
+      "sha256": "bc8773a127ff3e0392362f7f16545cd3e9c33afa040704c976abe59bfe4b4af3",
+      "migratedSha256": "88ed6ee5778b446a182a43e39e4b440b212507bd9ee591c99f414dff2d619527",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/gapsAnalyzer.js",
+      "sha256": "af12ef6e772503a63f7a70e12eb10e61dc16227d28fb5669b90424b412fd732a",
+      "migratedSha256": "947741563710bc68862d711a1b352abf56aaf706770c19d14edb4fa1084dcfc2",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/kubernetesAnalyzer.js",
+      "sha256": "43d4fed05e425ab5471c57c53c60395dbea2543269e1a4e56f9a2a349be6d6cc",
+      "migratedSha256": "f1a6082743862d36f68a8a029a1df52f2666a2d2c16903d60013bac9814a8906",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/node/componentAnalyzer.js",
+      "sha256": "a7c46b5ac0264fbca9d9ecae8295326e8f56c8a13d7ccb7095c7447ebaaf0316",
+      "migratedSha256": "b87e3d2ad96f4f83a7bf46b7706f69f08bb49eafb933f639729626b97c61e66c",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/node/dependencyAnalyzer.js",
+      "sha256": "48aba9742564bb74ced7bf0354b7adddce271c8eee9caf08919be507eecb4645",
+      "migratedSha256": "0f9c454096a32e246e997fe030eb34966315631f2f341c55e612336e86872f21",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/node/expressAnalyzer.js",
+      "sha256": "b0d705d8d25d88fe624bbb96936698ad5516a49a9b85b4c256b7f093bd8e2cc5",
+      "migratedSha256": "8a6805ba49fe47ac40efe9c4331b1e20975969a618249dc230e1c76656aed7f9",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/node/nodeAnalyzer.js",
+      "sha256": "7095465e107980ed39aea3dc1b08ada79d1357a99a2baa3e81a8c578bde8e769",
+      "migratedSha256": "f0b0e392b1c3dc87d68e0bc4a9096c938d1007f416064155f3049d904d0696e6",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/python/componentAnalyzer.js",
+      "sha256": "dcdf44f306ad2e1b4673fca64fba3372f90977440056323a021eb653411df2b1",
+      "migratedSha256": "c77a2f033fcbb4c8ef2a66bc626a0750e39f99bc74884d68a99393b775e1775e",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/python/dependencyAnalyzer.js",
+      "sha256": "7691e0c979ec46e229258789d209fefdfd32538b3269d21573cfaa07aa745837",
+      "migratedSha256": "180cf4bd065a2ea8dda38de817a6c164cd8764c2eee9d1201377ffb87d5d5edc",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/python/fastApiAnalyzer.js",
+      "sha256": "12b378a225e4bc4993db08ac351cb0b85124016705aae6802ac7a8041177f39c",
+      "migratedSha256": "d026e415a8ade625ca47ff0c72e6bf10104d4aff07467216dec8b973a18ce073",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/python/pythonAnalyzer.js",
+      "sha256": "0950adc680a02f6983d46d08ec521e774b090968af358f79c32675d7d4a2f06b",
+      "migratedSha256": "242bfc8cc7c5754e740dfe9bd03f77cb268c949549bdb3a465afa0c587c84d21",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/pythonAnalyzer.js",
+      "sha256": "40d1b59ae9b76c2601eeb25098590cd2ef3822192661715adfa45f2df6b5feee",
+      "migratedSha256": "e625e237770ee727a86bf34361cb42f25e9ce0330b30b7a8f309da771a846737",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "analyzers/terraformAnalyzer.js",
+      "sha256": "9cfb9914a5e6dd7fa7b90a915147f3a6cea317f5fccb5a1a2fad5a78c8e694e4",
+      "migratedSha256": "fefdfecd097dcc4c089a32a2d4ba650eca10ffd32c15f21a623567a6f5f236a2",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    },
+    {
+      "source": "models/architectureModel.js",
+      "sha256": "26fc929732517d78e0924ab2a5701bd623d53d4294fde39ef7a769a22aff89cc",
+      "migratedSha256": "f4f5789dca83a16d649b5dfa1ae0f0488b149892c435edda3e2b2dce48bb4a5b",
+      "treatment": "mechanical ESM conversion; legacy debug output discarded"
+    }
+  ]
+}

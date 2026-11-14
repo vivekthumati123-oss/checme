@@ -1,0 +1,35 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "finops",
+  "displayName": "FinOps Dashboard",
+  "version": "1.4.0",
+  "description": "Weekly Copilot cost, seat utilisation and budget alert report.",
+  "owner": "Vivek",
+  "phase": "Phase 1: Quick Wins (W1-4)",
+  "status": "active",
+  "agent": ".github/agents/finops-agent.agent.md",
+  "skills": [
+    "copilot-finops-report",
+    "copilot-metrics-fetcher",
+    "cost-projection-engine",
+    "insight-engine"
+  ],
+  "hooks": [
+    "l2-audit"
+  ],
+  "policy": "configurations/policies/finops.yaml",
+  "runtime": {
+    "language": "python",
+    "model": "gpt-5",
+    "entrypoint": "agents/python/finops/main.py",
+    "module": "agents.python.finops.main",
+    "trigger": "schedule: Mondays 06:00 UTC",
+    "workflow": ".github/workflows/finops-scheduled.yml"
+  },
+  "config": {
+    "currency": "USD",
+    "seatCostPerMonth": 39,
+    "budgetAlertThresholdPercent": 85,
+    "inactiveDays": 30
+  }
+}

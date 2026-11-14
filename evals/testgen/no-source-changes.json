@@ -1,0 +1,30 @@
+{
+  "id": "no-source-changes",
+  "description": "Docs-only PR must skip without calling the model.",
+  "input": {
+    "pullRequest": {
+      "number": 11,
+      "title": "Docs",
+      "headBranch": "docs",
+      "headSha": "sha-11"
+    },
+    "changedFiles": [
+      {
+        "path": "docs/guide.md",
+        "status": "modified"
+      },
+      {
+        "path": "tests/unit/a.test.js",
+        "status": "modified"
+      }
+    ],
+    "files": {}
+  },
+  "replay": {
+    "files": []
+  },
+  "expect": {
+    "status": "skipped",
+    "runtimeCalls": 0
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "python-evidence",
+  "description": "FastAPI source retains Python evidence without asking a model to invent architecture.",
+  "input": { "payload": { "contents": [
+    { "path": "requirements.txt", "name": "requirements.txt", "content": "fastapi" },
+    { "path": "app/main.py", "name": "main.py", "content": "from fastapi import FastAPI\napp = FastAPI()\n@app.get(\"/users\")\ndef users():\n    return []" }
+  ] } },
+  "expect": {
+    "status": "succeeded", "runtimeCalls": 0, "languages": ["Python"],
+    "saved": false, "validationWarning": "semantic review is required"
+  }
+}

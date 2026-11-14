@@ -1,0 +1,32 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "tasksync",
+  "displayName": "TaskSync",
+  "version": "1.3.0",
+  "description": "Breaks a GitHub, Jira or Azure DevOps story into estimated child tasks and creates them.",
+  "owner": "Shireesha",
+  "phase": "Phase 1: Quick Wins (W1-4)",
+  "status": "active",
+  "agent": ".github/agents/task-agent.agent.md",
+  "skills": [
+    "story-decomposition",
+    "work-items"
+  ],
+  "hooks": [
+    "l2-audit"
+  ],
+  "policy": "configurations/policies/tasksync.yaml",
+  "runtime": {
+    "language": "node",
+    "model": "gpt-5",
+    "entrypoint": "agents/node/tasksync/src/index.js",
+    "package": "@l2/agent-tasksync",
+    "trigger": "workflow_dispatch, Jira/ADO webhook, or schedule",
+    "workflow": ".github/workflows/tasksync-dispatch.yml"
+  },
+  "config": {
+    "maxTasks": 12,
+    "estimateUnit": "hours",
+    "commentOnStory": true
+  }
+}

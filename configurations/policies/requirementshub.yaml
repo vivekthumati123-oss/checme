@@ -1,0 +1,9 @@
+rules:
+  - action: repository.read
+    effect: allow
+  - action: work-item.read
+    effect: allow
+  - action: file.write
+    effect: allow
+    conditions:
+      paths: ['.l2/requirementshub/**']

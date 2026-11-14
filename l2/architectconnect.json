@@ -1,0 +1,28 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "architectconnect",
+  "displayName": "ArchitectConnect",
+  "version": "0.1.0",
+  "description": "Generates HLDs grounded in the real repository structure.",
+  "owner": "Srivyshnavi",
+  "phase": "Phase 2: Core Platform (W5-10)",
+  "status": "draft",
+  "agent": ".github/agents/architectconnect.agent.md",
+  "skills": ["architectconnect"],
+  "hooks": [
+    "l2-guardrails",
+    "l2-audit"
+  ],
+  "policy": "configurations/policies/architectconnect.yaml",
+  "runtime": {
+    "language": "node",
+    "package": "@l2/agent-architectconnect",
+    "entrypoint": "agents/node/architectconnect/src/index.js",
+    "trigger": "workflow_dispatch, label: architecture-impact"
+  },
+  "evals": "evals/architectconnect",
+  "config": {
+    "diagramFormat": "mermaid",
+    "outputDirectory": "docs/hld/architectconnect"
+  }
+}

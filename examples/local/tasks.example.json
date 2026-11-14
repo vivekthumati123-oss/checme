@@ -1,0 +1,7 @@
+{
+  "tasks": [
+    { "title": "Add late fee calculation to LateFeeService", "description": "2% of the overdue amount per started 30-day period.", "estimateHours": 4, "acceptanceCriterionRef": "AC-1" },
+    { "title": "Apply 5-day grace period", "description": "No fee when paid within 5 days.", "estimateHours": 2, "acceptanceCriterionRef": "AC-2" },
+    { "title": "Unit tests for late fee rules", "description": "Cover AC-1 to AC-4.", "estimateHours": 3, "acceptanceCriterionRef": "AC-1" }
+  ]
+}

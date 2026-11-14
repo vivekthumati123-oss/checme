@@ -1,0 +1,25 @@
+agent: codeconnect
+rules:
+  - action: repository.read
+    effect: allow
+  - action: work-item.read
+    effect: allow
+  - action: pull-request.comment
+    effect: allow
+  - action: file.write
+    effect: allow
+    conditions:
+      paths: [src/**, app/**, lib/**, tests/**, docs/**]
+  - action: file.write
+    effect: deny
+    conditions:
+      paths: [.github/**, infrastructure/**, "**/*.pem", "**/*.env"]
+    reason: CodeConnect must not modify pipelines, infrastructure or secrets
+  - action: commit.create
+    effect: allow
+  - action: pull-request.create
+    effect: allow
+  - action: work-item.link
+    effect: allow
+  - action: work-item.comment
+    effect: allow

@@ -1,0 +1,9 @@
+agent: finops
+rules:
+  - action: repository.read
+    effect: allow
+  - action: notification.send
+    effect: allow
+  - action: file.write
+    effect: deny
+    reason: FinOps is read-only

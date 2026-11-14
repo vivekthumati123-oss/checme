@@ -1,0 +1,54 @@
+{
+  "id": "python-pytest",
+  "description": "A Python change selects pytest and loads only the pytest reference and Python instructions.",
+  "input": {
+    "pullRequest": {
+      "number": 7,
+      "title": "Add EMI calculator",
+      "headBranch": "feature/emi",
+      "headSha": "sha-7"
+    },
+    "changedFiles": [
+      {
+        "path": "src/lending/emi.py",
+        "status": "added"
+      }
+    ],
+    "files": {
+      "src/lending/emi.py": "def emi(principal: float, monthly_rate: float, months: int) -> float:\n    if months <= 0:\n        raise ValueError('months must be positive')\n    if monthly_rate == 0:\n        return principal / months\n    factor = (1 + monthly_rate) ** months\n    return principal * monthly_rate * factor / (factor - 1)\n"
+    }
+  },
+  "replay": {
+    "framework": "pytest",
+    "files": [
+      {
+        "path": "tests/unit/lending/test_emi.py",
+        "sourcePath": "src/lending/emi.py",
+        "casesGenerated": 2,
+        "content": "import pytest\n\nfrom src.lending.emi import emi\n\n\ndef test_zero_rate_splits_principal_evenly():\n    # Arrange\n    principal = 1200\n\n    # Act\n    result = emi(principal, 0, 12)\n\n    # Assert\n    assert result == pytest.approx(100)\n\n\ndef test_rejects_non_positive_months():\n    # Arrange\n    months = 0\n\n    # Act / Assert\n    with pytest.raises(ValueError):\n        emi(1000, 0.01, months)\n"
+      }
+    ],
+    "summary": "Generated 2 pytest tests."
+  },
+  "expect": {
+    "status": "succeeded",
+    "framework": "pytest",
+    "minTestsGenerated": 2,
+    "acceptedPathsMatch": [
+      "tests/**/test_*.py"
+    ],
+    "promptIncludes": [
+      "instructions:python",
+      "reference:aaa-unit-tests/references/pytest.md"
+    ],
+    "promptExcludes": [
+      "reference:aaa-unit-tests/references/jest.md",
+      "instructions:javascript"
+    ],
+    "contentMustMatch": [
+      "def test_",
+      "# Arrange",
+      "pytest\\.raises"
+    ]
+  }
+}

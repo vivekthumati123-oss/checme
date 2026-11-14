@@ -1,0 +1,13 @@
+agent: tasksync
+rules:
+  - action: repository.read
+    effect: allow
+  - action: work-item.read
+    effect: allow
+  - action: work-item.create
+    effect: allow
+  - action: work-item.comment
+    effect: allow
+  - action: file.write
+    effect: deny
+    reason: TaskSync never writes to repositories

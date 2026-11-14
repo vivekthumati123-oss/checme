@@ -1,0 +1,15 @@
+{
+  "id": "empty-fallback",
+  "description": "An empty repository preserves legacy fallback and reports generated but unvalidated artifacts without writing.",
+  "input": { "payload": { "contents": [] } },
+  "expect": {
+    "status": "succeeded", "runtimeCalls": 0,
+    "selectionSource": "legacy", "fallbackUsed": true, "saved": false,
+    "validationWarning": "not grammar-validated",
+    "acceptedPaths": [
+      "docs/hld/architectconnect/ArchitectureReport.md",
+      "docs/hld/architectconnect/architecture.dsl",
+      "docs/hld/architectconnect/ArchitectureDecisions.json"
+    ]
+  }
+}

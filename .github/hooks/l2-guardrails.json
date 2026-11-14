@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "node .github/hooks/scripts/guard-tool-use.mjs",
+        "powershell": "node .github/hooks/scripts/guard-tool-use.mjs",
+        "cwd": ".",
+        "timeoutSec": 10,
+        "env": { "GUARD_MODE": "deny" }
+      }
+    ]
+  }
+}

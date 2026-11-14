@@ -1,0 +1,29 @@
+name: RequirementsHub
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [list, generate, finalize]
+        default: generate
+      epic-key: { type: string, required: true, description: 'One Jira epic key (state ID only for list)' }
+      revision: { type: string, default: draft, description: 'Fresh revision name for regeneration' }
+      answers-path: { type: string, description: 'Application-relative confirmed BA answers JSON' }
+      source-run-id: { type: string, description: 'Prior workflow run with draft/source map; required for finalize or regeneration' }
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  requirementshub:
+    uses: ./.github/workflows/_agent-planning-reusable.yml
+    with:
+      agent: requirementshub
+      operation: ${{ inputs.operation }}
+      state-id: ${{ inputs.epic-key }}
+      revision: ${{ inputs.revision }}
+      answers-path: ${{ inputs.answers-path }}
+      source-run-id: ${{ inputs.source-run-id }}
+    secrets: inherit

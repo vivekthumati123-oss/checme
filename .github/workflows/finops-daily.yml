@@ -1,0 +1,56 @@
+name: FinOps Daily Budget Monitor
+
+on:
+  schedule:
+    # Runs daily at 6:00 AM UTC (11:30 AM IST)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    # Manual trigger for testing and ad-hoc runs
+    inputs:
+      dry_run:
+        description: "If true, log results but don't send Teams alert"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  GITHUB_TOKEN: ${{ secrets.FINOPS_PAT }}
+  COPILOT_ORG: ${{ vars.COPILOT_ORG }}
+  MONTHLY_BUDGET_USD: ${{ vars.MONTHLY_BUDGET_USD }}
+  ALERT_THRESHOLD_PERCENT: ${{ vars.ALERT_THRESHOLD_PERCENT }}
+  TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+  SEAT_COST_USD: ${{ vars.SEAT_COST_USD }}
+  COPILOT_PLAN: ${{ vars.COPILOT_PLAN }}
+  DRY_RUN: ${{ inputs.dry_run || 'false' }}
+
+jobs:
+  finops-monitor:
+    name: Evaluate Copilot Budget
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run FinOps Agent
+        id: finops
+        run: python -m agents.python.finops.monitor
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## FinOps Agent Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Organization:** ${{ vars.COPILOT_ORG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Budget:** \$${{ vars.MONTHLY_BUDGET_USD }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Threshold:** ${{ vars.ALERT_THRESHOLD_PERCENT }}%" >> $GITHUB_STEP_SUMMARY
+          echo "- **Plan:** ${{ vars.COPILOT_PLAN || 'business' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry Run:** ${{ inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_STEP_SUMMARY

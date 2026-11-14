@@ -1,0 +1,7 @@
+{
+  "id": "empty-epic",
+  "description": "Rejects an epic without child requirements before model invocation",
+  "input": { "payload": { "mode": "generate", "epicKey": "APP-1" }, "epic": { "type": "Epic", "title": "Empty", "description": "" }, "children": [] },
+  "replay": {},
+  "expect": { "status": "failed", "runtimeCalls": 0, "workItemWrites": 0 }
+}

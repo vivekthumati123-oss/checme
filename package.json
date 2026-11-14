@@ -1,0 +1,30 @@
+{
+  "name": "l2-agent-platform",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "description": "L2 programmatic extensions of GitHub Copilot custom agents, with GitHub Issues, Jira and Azure DevOps integration and an internal plugin marketplace",
+  "workspaces": ["packages/node/*", "agents/node/*"],
+  "scripts": {
+    "validate": "node scripts/validate.js",
+    "validate:strict": "node scripts/validate.js --strict",
+    "build": "node scripts/build-catalog.js",
+    "package": "node scripts/package.js",
+    "test": "node --test \"tests/node/**/*.test.js\" \"tests/unit/**/*.test.js\" \"tests/unit/.github/**/*.test.js\"",
+    "test:architectconnect": "node --test \"tests/unit/agents/node/architectconnect/**/*.test.js\" tests/node/architectconnect.integration.test.js",
+    "eval": "node scripts/eval.js",
+    "demo": "node scripts/demo.js",
+    "wi": "node .github/skills/work-items/scripts/wi.mjs",
+    "agent:create": "node scripts/create-agent.js",
+    "agent:testgen": "node agents/node/testgen/src/index.js",
+    "agent:unit-agent": "node agents/node/testgen/src/index.js",
+    "agent:codeconnect": "node agents/node/codeconnect/src/index.js",
+    "agent:tasksync": "node agents/node/tasksync/src/index.js",
+    "agent:modplanner": "node agents/node/modplanner/src/index.js",
+    "agent:requirementshub": "node agents/node/requirementshub/src/index.js",
+    "agent:architectconnect": "node agents/node/architectconnect/src/index.js",
+    "check": "npm run validate && npm test && npm run eval"
+  },
+  "engines": { "node": "^20.19.0 || >=22.12.0" },
+  "optionalDependencies": { "@github/copilot-sdk": "1.0.16" }
+}

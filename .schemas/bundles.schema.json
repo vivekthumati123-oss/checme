@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Marketplace bundles (bundles.json)",
+  "type": "object",
+  "required": ["marketplace", "bundles"],
+  "properties": {
+    "marketplace": { "type": "object", "required": ["name", "repository", "description", "owner"] },
+    "platform": { "type": "object" },
+    "bundles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "description", "status"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9-]{1,64}$" },
+          "version": { "type": "string" },
+          "status": { "enum": ["draft", "published", "deprecated"] },
+          "agents": { "type": "array", "items": { "type": "string" } },
+          "skills": { "type": "array", "items": { "type": "string" } },
+          "hooks": { "type": "array", "items": { "type": "string" } },
+          "instructions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

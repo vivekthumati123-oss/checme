@@ -1,0 +1,34 @@
+{
+  "$schema": "../.schemas/l2.schema.json",
+  "name": "testgen",
+  "displayName": "TestGen",
+  "version": "1.3.0",
+  "description": "Generates executable AAA unit tests for pull request changes.",
+  "owner": "Vivek",
+  "phase": "Phase 1: Quick Wins (W1-4)",
+  "status": "active",
+  "agent": ".github/agents/unit-agent.agent.md",
+  "skills": [
+    "aaa-unit-tests"
+  ],
+  "hooks": [
+    "l2-guardrails",
+    "l2-audit"
+  ],
+  "policy": "configurations/policies/testgen.yaml",
+  "runtime": {
+    "language": "node",
+    "model": "gpt-5",
+    "entrypoint": "agents/node/testgen/src/index.js",
+    "package": "@l2/agent-testgen",
+    "trigger": "pull_request: opened, synchronize, reopened, labeled(agent:testgen)",
+    "workflow": ".github/workflows/testgen-pr.yml"
+  },
+  "config": {
+    "framework": "auto",
+    "maxFilesPerRun": 10,
+    "outputMode": "artifact",
+    "promptBudgetChars": 60000
+  },
+  "evals": "evals/testgen"
+}

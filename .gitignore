@@ -1,0 +1,11 @@
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.l2/
+.l2-platform/
+dist/
+.env
+.env.local
+.env.*.local
+.DS_Store

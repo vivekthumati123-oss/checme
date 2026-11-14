@@ -1,0 +1,5 @@
+{
+  "action": "scheduled",
+  "sender": { "id": 1, "login": "github-actions[bot]", "type": "Bot" },
+  "repository": { "name": "l2-agent-platform", "default_branch": "main", "owner": { "login": "techm-microsoft-ibu" } }
+}

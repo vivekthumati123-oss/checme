@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "modplanner": [
+    {
+      "application": "legacy-orders-app",
+      "project": "KAN",
+      "epic": "KAN-14",
+      "plan": "modplanner/migration-plan.json",
+      "receipt": "modplanner/jira-created.json"
+    }
+  ],
+  "requirementshub": ["KAN-4", "KAN-8", "KAN-14"]
+}

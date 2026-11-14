@@ -1,0 +1,162 @@
+name: Reusable Planning Agent
+
+on:
+  workflow_call:
+    inputs:
+      agent: { required: true, type: string }
+      operation: { required: true, type: string }
+      state-id: { required: true, type: string }
+      assessment-path: { type: string, default: '' }
+      answers-path: { type: string, default: '' }
+      revision: { type: string, default: draft }
+      preview-digest: { type: string, default: '' }
+      source-run-id: { type: string, default: '' }
+      platform-repository: { type: string, default: '' }
+      platform-ref: { type: string, default: '' }
+    secrets:
+      COPILOT_GITHUB_TOKEN: { required: false }
+      L2_PLATFORM_TOKEN: { required: false }
+      JIRA_EMAIL: { required: false }
+      JIRA_API_TOKEN: { required: false }
+      JIRA_PAT: { required: false }
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  planning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.operation == 'create' && 'modplanner-jira-write' || 'planning-read-only' }}
+    concurrency:
+      group: planning-${{ github.repository }}-${{ inputs.agent }}-${{ vars.JIRA_PROJECT }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate inputs and approvals
+        env:
+          AGENT: ${{ inputs.agent }}
+          OPERATION: ${{ inputs.operation }}
+          STATE_ID: ${{ inputs.state-id }}
+          SOURCE_RUN: ${{ inputs.source-run-id }}
+          DIGEST: ${{ inputs.preview-digest }}
+          PLATFORM_REPOSITORY: ${{ inputs.platform-repository }}
+          PLATFORM_REF: ${{ inputs.platform-ref }}
+          REVISION: ${{ inputs.revision }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$STATE_ID" =~ ^[A-Za-z0-9_-]+$ && "$REVISION" =~ ^[A-Za-z0-9_-]+$ ]]
+          case "$AGENT:$OPERATION" in
+            modplanner:plan|modplanner:preview|modplanner:create|modplanner:link|requirementshub:list|requirementshub:generate|requirementshub:finalize) ;;
+            *) echo "Unsupported planning operation"; exit 1 ;;
+          esac
+          if [ -n "$PLATFORM_REPOSITORY" ]; then
+            [[ "$PLATFORM_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+            [[ "$PLATFORM_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$PLATFORM_REF" =~ ^[a-f0-9]{40}$ ]]
+          fi
+          if [ "$OPERATION" = create ]; then
+            [[ "$SOURCE_RUN" =~ ^[0-9]+$ && "$DIGEST" =~ ^[a-f0-9]{64}$ ]]
+            protected=$(gh api "repos/$GITHUB_REPOSITORY/environments/modplanner-jira-write" --jq '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length) > 0)')
+            [ "$protected" = true ] || { echo "Configure required reviewers on modplanner-jira-write before creating Jira issues"; exit 1; }
+          fi
+          if [ "$OPERATION" = preview ] || [ "$OPERATION" = link ] || [ "$OPERATION" = finalize ] || [ "$REVISION" != draft ]; then
+            [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          fi
+          if [ -n "$SOURCE_RUN" ]; then
+            [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+            origin=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq '.head_repository.full_name')
+            event=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq '.event')
+            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq '.status')
+            [ "$origin" = "$GITHUB_REPOSITORY" ] && [ "$event" = workflow_dispatch ] && [ "$status" = completed ]
+          fi
+      - uses: actions/checkout@v4
+      - name: Checkout platform release
+        if: inputs.platform-repository != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: .l2-platform
+          token: ${{ secrets.L2_PLATFORM_TOKEN || github.token }}
+      - name: Resolve checkout roots
+        env:
+          PLATFORM_REPOSITORY: ${{ inputs.platform-repository }}
+        run: |
+          if [ -n "$PLATFORM_REPOSITORY" ]; then root="$GITHUB_WORKSPACE/.l2-platform"; else root="$GITHUB_WORKSPACE"; fi
+          echo "L2_ROOT=$root" >> "$GITHUB_ENV"
+          echo "APPLICATION_WORKSPACE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "L2_AUDIT_LOG=$GITHUB_WORKSPACE/.l2/planning-audit.jsonl" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+      - name: Install declared dependencies
+        working-directory: ${{ env.L2_ROOT }}
+        run: npm ci --no-audit --no-fund
+      - name: Validate platform
+        working-directory: ${{ env.L2_ROOT }}
+        run: npm run validate
+      - name: Restore reviewed state
+        if: inputs.source-run-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: planning-state-${{ inputs.agent }}-${{ inputs.state-id }}
+          path: .l2/${{ inputs.agent }}/${{ inputs.state-id }}
+          run-id: ${{ inputs.source-run-id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+      - name: Run planning agent
+        working-directory: ${{ env.L2_ROOT }}
+        env:
+          AGENT_RUNTIME: copilot
+          AGENT_DRY_RUN: 'false'
+          PLANNING_AGENT: ${{ inputs.agent }}
+          PLANNING_MODE: ${{ inputs.operation }}
+          PLANNING_RUN_ID: ${{ inputs.state-id }}
+          EPIC_KEY: ${{ inputs.state-id }}
+          ASSESSMENT_PATH: ${{ inputs.assessment-path }}
+          BA_ANSWERS_PATH: ${{ inputs.answers-path }}
+          FSD_REVISION: ${{ inputs.revision }}
+          PREVIEW_DIGEST: ${{ inputs.preview-digest }}
+          PLANNING_APPROVAL_GATE: ${{ inputs.operation == 'create' && 'reviewed-environment' || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ vars.JIRA_PROJECT }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PAT: ${{ secrets.JIRA_PAT }}
+          JIRA_DEPLOYMENT: ${{ vars.JIRA_DEPLOYMENT }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=("$PLANNING_MODE")
+          if [ "$PLANNING_MODE" = create ]; then args+=(--apply --digest "$PREVIEW_DIGEST"); fi
+          node "agents/node/$PLANNING_AGENT/src/index.js" "${args[@]}"
+          if [ "$PLANNING_AGENT:$PLANNING_MODE" = modplanner:plan ]; then
+            node agents/node/modplanner/src/index.js preview
+          fi
+      - name: Upload checkpoints and documents
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: planning-state-${{ inputs.agent }}-${{ inputs.state-id }}
+          path: |
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/assessment.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/migration-plan.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/preview.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/jira-created.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/fr-ids.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/snapshot-*.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/answers-*.json
+            .l2/${{ inputs.agent }}/${{ inputs.state-id }}/FSD-*.md
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: planning-audit-${{ github.run_id }}
+          path: .l2/planning-audit.jsonl
+          include-hidden-files: true
+          if-no-files-found: ignore

@@ -1,0 +1,369 @@
+{
+  "format": 1,
+  "snapshot": "docs/migration-archive/architectconnect/source-snapshot.json",
+  "snapshotSha256": "2734c803d517d136b5c1f1fce4d4e1e98e3d6b418b963287da3e52e28487d790",
+  "files": [
+    {
+      "path": ".github/agents/architect-connect.agent.md",
+      "sha256": "e5e7ae05500717a07c4be3e25b7def054347cbae7532d6784fef8fc3103d1458",
+      "disposition": "adapted; original archived",
+      "target": ".github/agents/hld-agent.agent.md"
+    },
+    {
+      "path": ".github/copilot-instructions.md",
+      "sha256": "e281479e045e878b19e0133327473d982f18541f1f1cd8ec5db95ab8198e8eab",
+      "disposition": "adapted; original archived",
+      "target": ".github/skills/architectconnect/SKILL.md"
+    },
+    {
+      "path": ".github/workflows/architectconnect.yml",
+      "sha256": "bc20b2e145954738c18d49fb11e008853b78fc688a1d06813bbec76808eba941",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "3f0693be5349b6f52ddb24bcd36dedcfd826d06d47c2d4b0b85b884cefa4b7e6",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "adrGenerator.js",
+      "sha256": "9175f124911a7a19c0abed9ec908bf2e99ad4aa38e93dde8af4812ff5fd856e2",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/adrGenerator.js"
+    },
+    {
+      "path": "analyzers/bicepAnalyzer.js",
+      "sha256": "bdef0e02594af92b7c64d5390327608a18d127a77ccb9f12386e32a681526f9f",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/bicepAnalyzer.js"
+    },
+    {
+      "path": "analyzers/dependencies/javascriptImportAnalyzer.js",
+      "sha256": "138b6a8e02450b5267b2e5ffdf2d03345dacdd0422e62944aeb831c06c37a6bd",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/dependencies/javascriptImportAnalyzer.js"
+    },
+    {
+      "path": "analyzers/dependencies/pythonImportAnalyzer.js",
+      "sha256": "e49b2515c00335f10305b76badde800fa84e55a50d61345bf754dc0d544bde24",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/dependencies/pythonImportAnalyzer.js"
+    },
+    {
+      "path": "analyzers/discovery/apiComponentRelationshipDiscovery.js",
+      "sha256": "3bd397554f8ba0229bd63914c9b392ecd048db68eba4a7966e1ecc5725f6cd67",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/apiComponentRelationshipDiscovery.js"
+    },
+    {
+      "path": "analyzers/discovery/apiDiscovery.js",
+      "sha256": "950d9315004430dce1bea06b9b0de6ba8116bfc0f337d5dff123dcaf6662d2e5",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/apiDiscovery.js"
+    },
+    {
+      "path": "analyzers/discovery/applicationDiscovery.backup.js",
+      "sha256": "8e6a53a4e56efb18669b3fc8f2caedc10d35986e41399b2d2fe32551056af282",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "analyzers/discovery/applicationDiscovery.js",
+      "sha256": "a68f66b120314d2d49d8d3ba0974626cbc6dc7d2c838bf3d6feb54ddab551d5b",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/applicationDiscovery.js"
+    },
+    {
+      "path": "analyzers/discovery/architectureProjection.js",
+      "sha256": "e5e12bc69be5a46823571f5ffdff58626d76efad4422ebae57f0d9eff2d28d76",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/architectureProjection.js"
+    },
+    {
+      "path": "analyzers/discovery/architectureSelector.js",
+      "sha256": "53045ec721e6d46b5a11387b3fae252a4017651ed455b4ef30050ce5ad5b3068",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/architectureSelector.js"
+    },
+    {
+      "path": "analyzers/discovery/componentDiscovery.js",
+      "sha256": "aff5345464e26d035aebe1b91b8f4554adb0badbc9ea883730e34e9b067d6389",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/componentDiscovery.js"
+    },
+    {
+      "path": "analyzers/discovery/pathUtils.js",
+      "sha256": "f64dece208f6d8c8666cde29132e98a52591c19bf5b85201d65bc0ba8d003b11",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/pathUtils.js"
+    },
+    {
+      "path": "analyzers/discovery/technologyDiscovery.js",
+      "sha256": "18b208382bd600300af6e41576c7f796ebd9e0211dbd28b46df115e612862681",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/discovery/technologyDiscovery.js"
+    },
+    {
+      "path": "analyzers/dockerAnalyzer.js",
+      "sha256": "bc8773a127ff3e0392362f7f16545cd3e9c33afa040704c976abe59bfe4b4af3",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/dockerAnalyzer.js"
+    },
+    {
+      "path": "analyzers/gapsAnalyzer.js",
+      "sha256": "af12ef6e772503a63f7a70e12eb10e61dc16227d28fb5669b90424b412fd732a",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/gapsAnalyzer.js"
+    },
+    {
+      "path": "analyzers/kubernetesAnalyzer.js",
+      "sha256": "43d4fed05e425ab5471c57c53c60395dbea2543269e1a4e56f9a2a349be6d6cc",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/kubernetesAnalyzer.js"
+    },
+    {
+      "path": "analyzers/node/componentAnalyzer.js",
+      "sha256": "a7c46b5ac0264fbca9d9ecae8295326e8f56c8a13d7ccb7095c7447ebaaf0316",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/node/componentAnalyzer.js"
+    },
+    {
+      "path": "analyzers/node/dependencyAnalyzer.js",
+      "sha256": "48aba9742564bb74ced7bf0354b7adddce271c8eee9caf08919be507eecb4645",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/node/dependencyAnalyzer.js"
+    },
+    {
+      "path": "analyzers/node/expressAnalyzer.js",
+      "sha256": "b0d705d8d25d88fe624bbb96936698ad5516a49a9b85b4c256b7f093bd8e2cc5",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/node/expressAnalyzer.js"
+    },
+    {
+      "path": "analyzers/node/nodeAnalyzer.js",
+      "sha256": "7095465e107980ed39aea3dc1b08ada79d1357a99a2baa3e81a8c578bde8e769",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/node/nodeAnalyzer.js"
+    },
+    {
+      "path": "analyzers/python/componentAnalyzer.js",
+      "sha256": "dcdf44f306ad2e1b4673fca64fba3372f90977440056323a021eb653411df2b1",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/python/componentAnalyzer.js"
+    },
+    {
+      "path": "analyzers/python/dependencyAnalyzer.js",
+      "sha256": "7691e0c979ec46e229258789d209fefdfd32538b3269d21573cfaa07aa745837",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/python/dependencyAnalyzer.js"
+    },
+    {
+      "path": "analyzers/python/fastApiAnalyzer.js",
+      "sha256": "12b378a225e4bc4993db08ac351cb0b85124016705aae6802ac7a8041177f39c",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/python/fastApiAnalyzer.js"
+    },
+    {
+      "path": "analyzers/python/pythonAnalyzer.js",
+      "sha256": "0950adc680a02f6983d46d08ec521e774b090968af358f79c32675d7d4a2f06b",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/python/pythonAnalyzer.js"
+    },
+    {
+      "path": "analyzers/pythonAnalyzer.js",
+      "sha256": "40d1b59ae9b76c2601eeb25098590cd2ef3822192661715adfa45f2df6b5feee",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/pythonAnalyzer.js"
+    },
+    {
+      "path": "analyzers/terraformAnalyzer.js",
+      "sha256": "9cfb9914a5e6dd7fa7b90a915147f3a6cea317f5fccb5a1a2fad5a78c8e694e4",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/analyzers/terraformAnalyzer.js"
+    },
+    {
+      "path": "architectConnectMcpServer.js",
+      "sha256": "8a75981a0eab7e0c0a58aafb4eb7eede94a0208f5c7f7221b6c0a8a6f3ae68e8",
+      "disposition": "retired with owner approval; original and contract archived",
+      "target": "docs/migration-archive/architectconnect/README.md"
+    },
+    {
+      "path": "architecture.dsl",
+      "sha256": "6f6d35f023bca236910515e48ddb6dbebae0a155ea4c3859be3f1d75c4250c03",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "ArchitectureDecisions-azure-scm-bridge.md",
+      "sha256": "66de23ebf7f7b6773b236260930c94860f13548079876f4fe97a4bc987714879",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "ArchitectureDecisions-scm-bridge.md",
+      "sha256": "dcaa474cab501e3b09f5bdba7446d366ef8c4bf3146840582bae5d26f0b614c3",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "ArchitectureDecisions.md",
+      "sha256": "56b3a3b1dc153abda8e484085e8d016a40fbafaaccdc37f0ae635069001fa341",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "ArchitectureReport.md",
+      "sha256": "2a35a57b0a7bf7a17113dad1baec9d1fb0edbb5f9b5d2092c424fbb86236e182",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "copilotSdkSmokeTest.mjs",
+      "sha256": "270501c5de4624332aadbbc79852e9c15da96c745570aa3a6e686fb24703be0b",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "githubConnector.js",
+      "sha256": "9d561229c79f781a74b267b505a5dda5a3714fd82e051e60fb464df0f37a4e4f",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/engine/services/githubRepositoryLoader.js"
+    },
+    {
+      "path": "hldGenerator.js",
+      "sha256": "7596d3ca4e6214c9a5c75901cabe871c84784af4343eb713aca1cb00024180c3",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/hldGenerator.js"
+    },
+    {
+      "path": "localConnector.js",
+      "sha256": "b5ac3b2b0f1c83043a70e856daeb03e9bce39dd30f72cebcb1022cca39b8b633",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/engine/services/localRepositoryLoader.js"
+    },
+    {
+      "path": "models/architectureModel.js",
+      "sha256": "26fc929732517d78e0924ab2a5701bd623d53d4294fde39ef7a769a22aff89cc",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/models/architectureModel.js"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "61655fe0c2f1eb86b8f6132180d9d6dd7d29deb08ab7cb82c989417a096faa8c",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "package.json",
+      "sha256": "5c3036b66a3087b626f9409d604f867cdce1fc9f3b02d969dcf9aa8c9e2b5307",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/package.json"
+    },
+    {
+      "path": "reportGenerator.js",
+      "sha256": "bdeac81307d6abc99b7537619b8914a5b20eb58b3531209a53cfde6245fad50e",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/artifact-writer.js"
+    },
+    {
+      "path": "repositoryScanner.backup.js",
+      "sha256": "8ac3b1c0cec139cbf4a950c3d8321ab8407be0cf9c86b574aa10aa796aa3cce3",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "repositoryScanner.beforeDynamicApis.js",
+      "sha256": "ca8b19b6b91a8009b7ad46cdb2445c2e212c88725a8552c399844c55e50c8e2e",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "repositoryScanner.js",
+      "sha256": "e71863700fab6d93bc01a0c951503a512182e0fe8d82e16cb67f92bb9e30bc32",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/repositoryScanner.js"
+    },
+    {
+      "path": "services/architectConnectService.js",
+      "sha256": "39d606612f2f9de4d9454b96904a6cfc911ddf0ed1867afad2a4d5e610ab8b06",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/engine/services/architectConnectService.js"
+    },
+    {
+      "path": "services/architectureFileSelector.js",
+      "sha256": "a16d9edace34c382de9fb28bdd24701cec509b1045f70bb8171edf112a4b56f8",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/engine/services/architectureFileSelector.js"
+    },
+    {
+      "path": "services/scmBridgeClient.js",
+      "sha256": "d9af83e2465a6364a1ffd0a0cfeda5bdf05322427b0f9003ff939e26f3051226",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/engine/services/scmBridgeClient.js"
+    },
+    {
+      "path": "services/scmRepositoryLoader.js",
+      "sha256": "7e0bc3c8b4a41636f3a069122909f41d0dcd108ac66e5061f20faad2e8e5693a",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/engine/services/scmRepositoryLoader.js"
+    },
+    {
+      "path": "structurizrGenerator.js",
+      "sha256": "ac6fe370b4985076ae33d806c9a99053f95c3ec36b88ae78da3024ec998ed39f",
+      "disposition": "migrated",
+      "target": "agents/node/architectconnect/src/engine/structurizrGenerator.js"
+    },
+    {
+      "path": "test.js",
+      "sha256": "3d2f535e681f0556bbfbab4ee27a9c71ec5202c764f259a01939be7d65794c56",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "testArchitectConnectScmIntegration.js",
+      "sha256": "f35eb5ed196c9e54d75e09e4b7338d1430ecdb736ea0a50b632c4397b8ed96d6",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "testArchitectConnectScmService.js",
+      "sha256": "f420c9d0939e6c30923395d6fafca8e475d492c1007497c77223e892093f6486",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "testScmBridgeClient.js",
+      "sha256": "117297ab558f54224dd7b7b913caf3e434c4f70b794283576940b925dac91cf7",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "testScmRepositoryScanner.js",
+      "sha256": "058f93fd10529c9e26239d1967ccb5abff042bd2e1ce92a007c69810efa1dda9",
+      "disposition": "archived historical material; not runtime code",
+      "target": "docs/migration-archive/architectconnect/source-snapshot.json"
+    },
+    {
+      "path": "testService.js",
+      "sha256": "bdbd6a4860affe0764cf56f1008e84c424cdb80021228a59a8bb82c286cd06a9",
+      "disposition": "adapted; original archived",
+      "target": "agents/node/architectconnect/src/index.js"
+    }
+  ],
+  "excluded": [
+    {
+      "path": ".env",
+      "reason": "owner-managed credentials; not read"
+    }
+  ],
+  "emptyDirectories": [
+    "src"
+  ],
+  "decisions": {
+    "mcp": "retirement approved",
+    "liveScm": "deferred by owner",
+    "activationAndDeletion": "await final owner review"
+  }
+}

@@ -1,0 +1,27 @@
+name: TestGen
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths: ["src/**", "app/**", "lib/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  testgen:
+    if: >
+      github.event.pull_request.draft == false &&
+      (github.event.action != 'labeled' || github.event.label.name == 'agent:testgen')
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      issues: write
+    uses: ./.github/workflows/_agent-node-reusable.yml
+    with:
+      agent: testgen
+      package: "@l2/agent-testgen"
+      runtime: copilot
+      pr-number: ${{ github.event.pull_request.number }}
+    secrets: inherit

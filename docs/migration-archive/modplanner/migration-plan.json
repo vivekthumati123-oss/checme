@@ -1,0 +1,79 @@
+{
+  "application": "legacy-orders-app",
+  "summary": "The migration moves legacy-orders-app from Java 8/Spring Boot 1.5 to Java 17/Spring Boot 3.2, starting with shared foundational code and progressing through dependent services in dependency order. Each module requires remediation of deprecated APIs, javax-to-jakarta namespace changes, and framework-specific upgrades before moving to the next.",
+  "modules": [
+    {
+      "id": "common-utils",
+      "order": 1,
+      "dependsOn": [],
+      "riskScore": 3,
+      "riskReason": "Small shared module but widely used; deprecated Date/Calendar usage is low complexity to fix",
+      "effortDays": 4,
+      "tasks": [
+        "Replace Date and Calendar usage with java.time APIs",
+        "Upgrade to Java 17 syntax and build config",
+        "Update Maven dependencies to Spring Boot 3.2 compatible versions",
+        "Add unit tests for refactored utility classes"
+      ],
+      "status": "pending",
+      "jiraKey": "KAN-15"
+    },
+    {
+      "id": "customer-service",
+      "order": 2,
+      "dependsOn": [
+        "common-utils"
+      ],
+      "riskScore": 5,
+      "riskReason": "javax to jakarta namespace migration plus Spring Security config overhaul increases risk",
+      "effortDays": 10,
+      "tasks": [
+        "Migrate javax.* imports to jakarta.*",
+        "Rewrite Spring Security configuration using Spring Security 6 model",
+        "Update REST controllers and DTOs for Spring Boot 3.2 compatibility",
+        "Run regression tests against customer profile APIs"
+      ],
+      "status": "pending",
+      "jiraKey": "KAN-16"
+    },
+    {
+      "id": "order-service",
+      "order": 3,
+      "dependsOn": [
+        "common-utils",
+        "customer-service"
+      ],
+      "riskScore": 8,
+      "riskReason": "Largest and most complex module; XML bean config and Hibernate 4 queries require significant rework alongside payment flow criticality",
+      "effortDays": 22,
+      "tasks": [
+        "Migrate javax.* imports to jakarta.*",
+        "Convert XML-based bean configuration to Java/annotation-based config",
+        "Upgrade Hibernate 4 queries and mappings to Hibernate 6",
+        "Validate order creation and payment flow with integration tests",
+        "Performance test critical payment paths post-migration"
+      ],
+      "status": "pending",
+      "jiraKey": "KAN-18"
+    },
+    {
+      "id": "reporting",
+      "order": 4,
+      "dependsOn": [
+        "common-utils"
+      ],
+      "riskScore": 6,
+      "riskReason": "Removed JAXB APIs require replacement libraries and careful validation of report output",
+      "effortDays": 8,
+      "tasks": [
+        "Replace removed JAXB APIs with jakarta.xml.bind or alternative library",
+        "Update XML marshalling/unmarshalling logic and dependencies",
+        "Verify nightly sales report output matches legacy format",
+        "Update scheduled job configuration for Spring Boot 3.2"
+      ],
+      "status": "pending",
+      "jiraKey": "KAN-17"
+    }
+  ],
+  "epicKey": "KAN-14"
+}
