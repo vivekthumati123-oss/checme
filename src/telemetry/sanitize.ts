@@ -3,7 +3,8 @@ import os from "node:os";
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]/g;
 
-export const SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE)/i;
+export const SECRET_ENV_KEY_RE =
+  /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE|(?:^|_)(?:AUTH|PAT|COOKIE)(?:$|_)|(?:^|_)KEY(?:$|_))/i;
 
 export const EXPLICIT_FORBIDDEN_ENV_KEYS = new Set([
   "COPILOT_GITHUB_TOKEN",

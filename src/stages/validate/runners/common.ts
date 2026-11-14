@@ -1,5 +1,6 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { FailureReason, LanguageConfig, UnitAgentConfig } from "../../../contracts";
 import type { ExecResult } from "../../../exec/exec";
@@ -39,7 +40,18 @@ export function shouldUseOfflineWrapper(config: UnitAgentConfig, explicitOffline
 }
 
 export function resolveOfflineScriptPath(repoRoot: string): string {
-  return path.resolve(repoRoot, "scripts", "run-offline.sh");
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "..", "scripts", "run-offline.sh"),
+    path.resolve(moduleDir, "..", "..", "..", "..", "scripts", "run-offline.sh"),
+    path.resolve(repoRoot, "scripts", "run-offline.sh"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[1]!;
 }
 
 export function cleanupTempFile(filePath: string): void {

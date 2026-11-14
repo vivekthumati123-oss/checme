@@ -321,4 +321,163 @@ describe("validate, repair, and publish flow", () => {
     const savedFinal = JSON.parse(readFileSync(path.join(workDir, "final", "final.json"), "utf8"));
     expect(savedFinal.mode).toBe("report");
   });
+
+  it("preserves previously accepted final.json entries on multi-repair attempt >= 3", async () => {
+    const dir = makeTempDir();
+    const workDir = path.join(dir, ".unit-agent");
+    mkdirSync(path.join(dir, "src"), { recursive: true });
+    writeFileSync(path.join(dir, "src", "math.ts"), "export function add(a: number, b: number) { return a + b; }\n");
+    writeFileSync(path.join(dir, "src", "calc.ts"), "export function sub(a: number, b: number) { return a - b; }\n");
+
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      mode: "report",
+      languages: {
+        javascript: {
+          testCommand: "npx vitest run",
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.{ext}"],
+        },
+      },
+    });
+
+    mkdirSync(path.join(workDir, "prepare"), { recursive: true });
+    const manifest = {
+      schemaVersion: 1,
+      runId: "run-multi-3",
+      repo: "acme/app",
+      pr: 8,
+      baseSha: "base0",
+      headSha: "head0",
+      createdAt: new Date().toISOString(),
+      baseline: { status: "no_coverage", perLanguage: {}, patchCoveragePct: null },
+      files: [
+        {
+          fileId: "math_1",
+          language: "javascript",
+          path: "src/math.ts",
+          testPath: "test/math.test.ts",
+          importHint: 'import { add } from "../src/math";',
+          contextPath: "contexts/math_1.json",
+          sourceSha256: sha256Hex("export function add(a: number, b: number) { return a + b; }\n"),
+          symbols: [
+            {
+              symbolId: "src/math.ts#add",
+              qualifiedName: "add",
+              kind: "function",
+              signature: "function add(a, b)",
+              range: { startLine: 1, endLine: 1 },
+              executableLines: 1,
+              coveredLines: 0,
+              coveragePct: 0,
+              changedLines: [1],
+              complexity: 1,
+              score: 5,
+            },
+          ],
+        },
+        {
+          fileId: "calc_1",
+          language: "javascript",
+          path: "src/calc.ts",
+          testPath: "test/calc.test.ts",
+          importHint: 'import { sub } from "../src/calc";',
+          contextPath: "contexts/calc_1.json",
+          sourceSha256: sha256Hex("export function sub(a: number, b: number) { return a - b; }\n"),
+          symbols: [
+            {
+              symbolId: "src/calc.ts#sub",
+              qualifiedName: "sub",
+              kind: "function",
+              signature: "function sub(a, b)",
+              range: { startLine: 1, endLine: 1 },
+              executableLines: 1,
+              coveredLines: 0,
+              coveragePct: 0,
+              changedLines: [1],
+              complexity: 1,
+              score: 5,
+            },
+          ],
+        },
+      ],
+      warnings: [],
+      skipped: [],
+    };
+    writeFileSync(path.join(workDir, "prepare", "manifest.json"), JSON.stringify(manifest), "utf8");
+
+    const mathTest =
+      'import { expect, it } from "vitest";\nimport { add } from "../src/math";\nit("adds", () => { expect(add(1, 2)).toBe(3); });\n';
+    const calcTest =
+      'import { expect, it } from "vitest";\nimport { sub } from "../src/calc";\nit("subs", () => { expect(sub(3, 1)).toBe(2); });\n';
+
+    mkdirSync(path.join(workDir, "generate"), { recursive: true });
+    writeFileSync(
+      path.join(workDir, "generate", "proposed.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        runId: "run-multi-3",
+        headSha: "head0",
+        model: "gpt",
+        files: [
+          {
+            fileId: "math_1",
+            testPath: "test/math.test.ts",
+            content: mathTest,
+            sha256: sha256Hex(mathTest),
+            symbolIds: ["src/math.ts#add"],
+            assumptions: [],
+            status: "ok",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const v1 = await runValidate({
+      repoRoot: dir,
+      workDir,
+      config: cfg,
+      phase: "static",
+      attempt: 1,
+      writeOutputs: false,
+    });
+    expect(v1.finalArtifact.files.map((f) => f.path)).toEqual(["test/math.test.ts"]);
+
+    mkdirSync(path.join(workDir, "repair"), { recursive: true });
+    writeFileSync(
+      path.join(workDir, "repair", "repaired.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        runId: "run-multi-3",
+        headSha: "head0",
+        model: "gpt",
+        files: [
+          {
+            fileId: "calc_1",
+            testPath: "test/calc.test.ts",
+            content: calcTest,
+            sha256: sha256Hex(calcTest),
+            symbolIds: ["src/calc.ts#sub"],
+            assumptions: [],
+            status: "ok",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const v3 = await runValidate({
+      repoRoot: dir,
+      workDir,
+      config: cfg,
+      phase: "static",
+      attempt: 3,
+      local: true,
+      writeOutputs: false,
+    });
+    expect(v3.finalArtifact.files.map((f) => f.path).sort()).toEqual(["test/calc.test.ts", "test/math.test.ts"]);
+  });
 });

@@ -167,4 +167,34 @@ describe("guard stage", () => {
       }),
     ).rejects.toMatchObject({ code: 20 });
   });
+
+  it("short-circuits with disabled when UNIT_AGENT_ENABLED=false", async () => {
+    const dir = makeTempDir();
+    const prev = process.env.UNIT_AGENT_ENABLED;
+    try {
+      process.env.UNIT_AGENT_ENABLED = "false";
+      const disabledRes = await runGuard({
+        repoRoot: dir,
+        workDir: path.join(dir, ".unit-agent"),
+        config: VALID_CFG,
+        eventPayload: baseEvent(),
+        writeOutputs: false,
+      });
+      expect(disabledRes.proceed).toBe(false);
+      expect(disabledRes.reason).toBe("disabled");
+
+      process.env.UNIT_AGENT_ENABLED = "true";
+      const enabledRes = await runGuard({
+        repoRoot: dir,
+        workDir: path.join(dir, ".unit-agent"),
+        config: VALID_CFG,
+        eventPayload: baseEvent(),
+        writeOutputs: false,
+      });
+      expect(enabledRes.proceed).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.UNIT_AGENT_ENABLED;
+      else process.env.UNIT_AGENT_ENABLED = prev;
+    }
+  });
 });

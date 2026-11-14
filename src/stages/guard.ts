@@ -6,7 +6,15 @@ import { EXIT_CODES, StageError, type GitHubClientLike, type LoggerLike, type Un
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
 
 export type GuardSkipReason =
-  "not_pull_request" | "fork_pr" | "draft_pr" | "skip_label" | "bot_pr" | "skip_commit_message" | "commit_loop" | "ok";
+  | "disabled"
+  | "not_pull_request"
+  | "fork_pr"
+  | "draft_pr"
+  | "skip_label"
+  | "bot_pr"
+  | "skip_commit_message"
+  | "commit_loop"
+  | "ok";
 
 export interface PullRequestEventPayload {
   action?: string;
@@ -89,6 +97,21 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
     }
     const raw = readFileSync(path.resolve(resolvedEventPath), "utf8");
     payload = JSON.parse(raw) as PullRequestEventPayload;
+  }
+
+  if (process.env.UNIT_AGENT_ENABLED?.trim().toLowerCase() === "false") {
+    const result: GuardResult = {
+      proceed: false,
+      reason: "disabled",
+      mode: loadedCfg.mode,
+      pr: payload.pull_request?.number ?? payload.number ?? 0,
+      baseSha: payload.pull_request?.base?.sha ?? "",
+      headSha: payload.pull_request?.head?.sha ?? "",
+      headRef: payload.pull_request?.head?.ref ?? "",
+      repoFullName: payload.repository?.full_name ?? process.env.GITHUB_REPOSITORY ?? "",
+    };
+    finalizeGuardOutputs(opts, result);
+    return result;
   }
 
   const prObj = payload.pull_request;

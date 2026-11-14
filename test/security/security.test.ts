@@ -20,6 +20,7 @@ import { sha256Hex } from "../../src/core/context";
 import { toRepoPath } from "../../src/core/paths";
 import { runStaticPolicyCheck } from "../../src/core/policy";
 import { buildChildEnv, runCommand } from "../../src/exec/exec";
+import { resolveGitHubTokensFromEnv } from "../../src/github";
 import { FakeLlmClient } from "../../src/llm/fake-client";
 import { cleanupLeftoverPlacedFiles, recordPlacedFile } from "../../src/local/placement";
 import { runCommit } from "../../src/stages/commit";
@@ -140,11 +141,29 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
       UA_COMMIT_TOKEN: "github_pat_CANARY_UA_COMMIT_123456",
       COMMIT_PAT: "github_pat_CANARY_PAT_123456",
       CUSTOM_API_SECRET: "canary_secret_value_xyz",
+      CUSTOM_AUTH: "Bearer canary_auth_header",
+      SESSION_COOKIE: "sid=canary_cookie",
+      SIGNING_KEY: "canary_signing_key",
+      MY_PAT: "ghp_canary_pat",
       SAFE_USER_VAR: "allowed-value",
     };
 
     const childEnv = buildChildEnv(
-      { env: { pass: ["SAFE_USER_VAR", "CUSTOM_API_SECRET", "COPILOT_GITHUB_TOKEN"], passProxy: false } },
+      {
+        env: {
+          pass: [
+            "SAFE_USER_VAR",
+            "CUSTOM_API_SECRET",
+            "COPILOT_GITHUB_TOKEN",
+            "COMMIT_PAT",
+            "CUSTOM_AUTH",
+            "SESSION_COOKIE",
+            "SIGNING_KEY",
+            "MY_PAT",
+          ],
+          passProxy: false,
+        },
+      },
       {},
       canaryParent,
     );
@@ -153,10 +172,18 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
     expect(childEnv.UA_COMMIT_TOKEN).toBeUndefined();
     expect(childEnv.COMMIT_PAT).toBeUndefined();
     expect(childEnv.CUSTOM_API_SECRET).toBeUndefined();
+    expect(childEnv.CUSTOM_AUTH).toBeUndefined();
+    expect(childEnv.SESSION_COOKIE).toBeUndefined();
+    expect(childEnv.SIGNING_KEY).toBeUndefined();
+    expect(childEnv.MY_PAT).toBeUndefined();
     expect(childEnv.SAFE_USER_VAR).toBe("allowed-value");
+    expect(Object.keys(childEnv).some((k) => k.toUpperCase() === "PATH")).toBe(true);
     if (process.platform === "win32") {
       expect(Object.keys(childEnv).some((k) => k.toUpperCase() === "SYSTEMROOT")).toBe(true);
       expect(Object.keys(childEnv).some((k) => k.toUpperCase() === "PATHEXT")).toBe(true);
+      if (Object.keys(process.env).some((k) => k.toUpperCase() === "HOMEPATH")) {
+        expect(Object.keys(childEnv).some((k) => k.toUpperCase() === "HOMEPATH")).toBe(true);
+      }
     }
 
     const dir = makeTempDir("ua-sec-env-");
@@ -896,6 +923,76 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
         if (prevOut === undefined) delete process.env.GITHUB_OUTPUT;
         else process.env.GITHUB_OUTPUT = prevOut;
       }
+    }
+  });
+
+  it("12. copy workspace skips tool cache dirs consistently and fails closed when maxCopyMB is exceeded", () => {
+    const repo = makeTempDir("ua-sec-copy-budget-");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    mkdirSync(path.join(repo, ".pytest_cache"), { recursive: true });
+    mkdirSync(path.join(repo, ".gradle"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "app.ts"), "export const x = 1;\n", "utf8");
+    // Cache files exceed 4 KB limit if not skipped identically by measureCopyBytes & copyFilteredTree
+    writeFileSync(path.join(repo, ".pytest_cache", "big.bin"), "x".repeat(8192), "utf8");
+    writeFileSync(path.join(repo, ".gradle", "cache.bin"), "y".repeat(8192), "utf8");
+
+    const baseCfg = ConfigSchema.parse({
+      version: 1,
+      languages: {
+        javascript: {
+          testCommand: "npx vitest run",
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.{ext}"],
+        },
+      },
+    });
+    const tinyBudgetCfg = {
+      ...baseCfg,
+      validate: { workspace: "copy" as const, maxCopyMB: 0.002 as unknown as number },
+    };
+
+    const wsOk = prepareValidationWorkspace(repo, tinyBudgetCfg, "validate1");
+    try {
+      expect(existsSync(path.join(wsOk.root, "src", "app.ts"))).toBe(true);
+      expect(existsSync(path.join(wsOk.root, ".pytest_cache"))).toBe(false);
+      expect(existsSync(path.join(wsOk.root, ".gradle"))).toBe(false);
+    } finally {
+      wsOk.cleanup();
+    }
+
+    // Regular source file larger than maxCopyMB fails closed
+    writeFileSync(path.join(repo, "src", "large.txt"), "z".repeat(8192), "utf8");
+    expect(() => prepareValidationWorkspace(repo, tinyBudgetCfg, "validate1")).toThrowError(StageError);
+    try {
+      prepareValidationWorkspace(repo, tinyBudgetCfg, "validate1");
+    } catch (err) {
+      expect((err as StageError).reason).toBe("sandbox_copy_failed");
+    }
+  });
+
+  it("13. resolveGitHubTokensFromEnv honors commit.auth precedence", () => {
+    const prevGh = process.env.GITHUB_TOKEN;
+    const prevUa = process.env.UA_COMMIT_TOKEN;
+    const prevPat = process.env.COMMIT_PAT;
+    try {
+      process.env.GITHUB_TOKEN = "gh_tok";
+      process.env.UA_COMMIT_TOKEN = "pat_tok";
+      delete process.env.COMMIT_PAT;
+
+      expect(resolveGitHubTokensFromEnv("github_token").commitToken).toBe("gh_tok");
+      expect(resolveGitHubTokensFromEnv("pat").commitToken).toBe("pat_tok");
+
+      delete process.env.GITHUB_TOKEN;
+      expect(resolveGitHubTokensFromEnv("github_token").commitToken).toBe("pat_tok");
+    } finally {
+      if (prevGh === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = prevGh;
+      if (prevUa === undefined) delete process.env.UA_COMMIT_TOKEN;
+      else process.env.UA_COMMIT_TOKEN = prevUa;
+      if (prevPat === undefined) delete process.env.COMMIT_PAT;
+      else process.env.COMMIT_PAT = prevPat;
     }
   });
 });

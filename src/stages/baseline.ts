@@ -91,6 +91,17 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
         config,
       });
 
+      if (res.timedOut) {
+        const msg = `baseline exceeded ${config.baseline.timeoutMinutes} minutes; set baseline.mode: skip or a faster testCommand`;
+        perLanguage[lang] = {
+          status: "no_coverage",
+          patchCoveragePct: null,
+          detail: msg,
+        };
+        opts.logger?.warn({ language: lang, timeoutMinutes: config.baseline.timeoutMinutes }, msg);
+        continue;
+      }
+
       if (res.exitCode !== 0) {
         const tail = sanitizeLogTail(`${res.stdout}\n${res.stderr}`, { repoRoot: opts.repoRoot }, 40);
         perLanguage[lang] = {

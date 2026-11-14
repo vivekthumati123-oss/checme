@@ -13,6 +13,7 @@ import {
 import { runBaseline } from "../../src/stages/baseline";
 import { runDetect } from "../../src/stages/detect";
 import { runPlan } from "../../src/stages/plan";
+import { resolveOfflineScriptPath } from "../../src/stages/validate/runners";
 
 const tempDirs: string[] = [];
 
@@ -202,5 +203,48 @@ describe("plan, baseline, and detect end-to-end on real git repo", () => {
     const ctxPath = path.join(workDir, "prepare", manifest.files[0]!.contextPath);
     const ctxJson = JSON.parse(readFileSync(ctxPath, "utf8"));
     expect(ctxJson.conventions.importHint).toContain("calc");
+  });
+
+  it("classifies timed-out baseline runs as no_coverage (never red) with actionable guidance", async () => {
+    const repo = makeTempDir();
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      baseline: { mode: "run", timeoutMinutes: 1 },
+      languages: {
+        javascript: {
+          testCommand: 'node -e "setTimeout(() => {}, 5000)"',
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.{ext}"],
+        },
+      },
+    });
+    const slowCfg = {
+      ...cfg,
+      baseline: { mode: "run" as const, timeoutMinutes: 0.002 as unknown as number },
+    };
+
+    const res = await runBaseline({
+      repoRoot: repo,
+      workDir: path.join(repo, ".unit-agent"),
+      config: slowCfg,
+      plan: { schemaVersion: 1, languages: ["javascript"], toolchains: {}, frameworks: {}, skipped: [], warnings: [] },
+      writeOutputs: false,
+    });
+
+    expect(res.status).toBe("no_coverage");
+    expect(res.perLanguage.javascript?.status).toBe("no_coverage");
+    expect(res.perLanguage.javascript?.detail).toContain("baseline exceeded");
+  });
+
+  it("resolves run-offline.sh from package root rather than an external or untrusted target repo", () => {
+    const extRepo = makeTempDir();
+    mkdirSync(path.join(extRepo, "scripts"), { recursive: true });
+    writeFileSync(path.join(extRepo, "scripts", "run-offline.sh"), "#!/bin/sh\necho untrusted\n", "utf8");
+
+    const resolved = resolveOfflineScriptPath(extRepo);
+    expect(path.resolve(resolved)).not.toBe(path.resolve(extRepo, "scripts", "run-offline.sh"));
+    expect(resolved.replace(/\\/g, "/")).toMatch(/\/scripts\/run-offline\.sh$/);
   });
 });

@@ -776,7 +776,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
   // Load any previously accepted files from attempt 1 if this is validate-2 so final.json merges cleanly
   let mergedFinalFiles = [...finalFiles];
   const finalJsonPath = path.join(opts.workDir, ARTIFACTS.final.dir, "final.json");
-  if (attempt === 2 && existsSync(finalJsonPath)) {
+  if (attempt >= 2 && existsSync(finalJsonPath)) {
     try {
       const prevFinal = FinalSchema.parse(JSON.parse(readFileSync(finalJsonPath, "utf8")));
       const byPath = new Map(prevFinal.files.map((f) => [f.path, f]));

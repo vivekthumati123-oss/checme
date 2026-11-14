@@ -21,6 +21,8 @@ export interface ValidationWorkspace {
   cleanup: () => void;
 }
 
+const LINK_COPY_DIRS = new Set(["node_modules", ".venv", "venv"]);
+
 const SKIP_COPY_DIRS = new Set([
   ".git",
   ".unit-agent",
@@ -70,11 +72,11 @@ function copyFilteredTree(srcRoot: string, destRoot: string): void {
     mkdirSync(destCur, { recursive: true });
     const entries = readdirSync(srcCur, { withFileTypes: true });
     for (const ent of entries) {
-      if (ent.name === ".git" || ent.name === ".unit-agent") continue;
+      if (!LINK_COPY_DIRS.has(ent.name) && SKIP_COPY_DIRS.has(ent.name)) continue;
       const srcPath = path.join(srcCur, ent.name);
       const destPath = path.join(destCur, ent.name);
 
-      if (ent.name === "node_modules" || ent.name === ".venv" || ent.name === "venv") {
+      if (LINK_COPY_DIRS.has(ent.name)) {
         linkDirs.push(cleanRepoRelative(normalizeSlashes(path.relative(srcRoot, srcPath))));
         continue;
       }

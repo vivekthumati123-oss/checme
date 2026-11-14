@@ -256,7 +256,7 @@ export function resolveGitHubTokensFromEnv(commitAuth: "github_token" | "pat" = 
 } {
   const githubToken = process.env.GITHUB_TOKEN?.trim() || undefined;
   const patToken = process.env.UA_COMMIT_TOKEN?.trim() || process.env.COMMIT_PAT?.trim() || undefined;
-  const commitToken = commitAuth === "pat" ? (patToken ?? githubToken) : (patToken ?? githubToken);
+  const commitToken = commitAuth === "pat" ? (patToken ?? githubToken) : (githubToken ?? patToken);
   return { githubToken, commitToken };
 }
 
