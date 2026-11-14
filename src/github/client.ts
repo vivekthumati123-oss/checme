@@ -13,6 +13,31 @@ interface ApprovalEnvironmentEntry {
   user?: { login?: string | null } | null;
 }
 
+/**
+ * Parse GitHub Environment `protection_rules` into reviewer requirements and
+ * self-review policy, failing closed (`preventSelfReview: true`) when omitted.
+ */
+export function parseEnvironmentProtectionRules(data: { protection_rules?: unknown }): {
+  hasRequiredReviewers: boolean;
+  preventSelfReview: boolean;
+} {
+  const rules = Array.isArray(data.protection_rules)
+    ? (data.protection_rules as Array<{
+        type?: string;
+        reviewers?: unknown[];
+        prevent_self_review?: boolean;
+      }>)
+    : [];
+  const requiredReviewerRules = rules.filter(
+    (rule) => rule.type === "required_reviewers" && (!Array.isArray(rule.reviewers) || rule.reviewers.length > 0),
+  );
+  const hasRequiredReviewers = requiredReviewerRules.length > 0;
+  const preventSelfReview = hasRequiredReviewers
+    ? requiredReviewerRules.some((rule) => rule.prevent_self_review !== false)
+    : true;
+  return { hasRequiredReviewers, preventSelfReview };
+}
+
 function getHttpStatus(err: unknown): number {
   if (err && typeof err === "object") {
     const rec = err as { status?: unknown; response?: { status?: unknown } };
@@ -132,6 +157,7 @@ export class OctokitGitHubClient implements GitHubClientLike {
     exists: boolean;
     status: number;
     hasRequiredReviewers: boolean;
+    preventSelfReview: boolean;
   }> {
     try {
       const { data, status } = await this.octokit.repos.getEnvironment({
@@ -139,25 +165,20 @@ export class OctokitGitHubClient implements GitHubClientLike {
         repo,
         environment_name: environmentName,
       });
-      const rules = (data.protection_rules ?? []) as Array<{
-        type?: string;
-        reviewers?: unknown[];
-      }>;
-      const hasRequiredReviewers = rules.some(
-        (rule) => rule.type === "required_reviewers" && (!Array.isArray(rule.reviewers) || rule.reviewers.length > 0),
-      );
+      const parsed = parseEnvironmentProtectionRules(data);
       return {
         exists: true,
         status,
-        hasRequiredReviewers,
+        hasRequiredReviewers: parsed.hasRequiredReviewers,
+        preventSelfReview: parsed.preventSelfReview,
       };
     } catch (err) {
       const status = getHttpStatus(err);
       if (status === 404) {
-        return { exists: false, status: 404, hasRequiredReviewers: false };
+        return { exists: false, status: 404, hasRequiredReviewers: false, preventSelfReview: true };
       }
       if (status === 403 || status === 401) {
-        return { exists: false, status: 403, hasRequiredReviewers: false };
+        return { exists: false, status: 403, hasRequiredReviewers: false, preventSelfReview: true };
       }
       throw err;
     }

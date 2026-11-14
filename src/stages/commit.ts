@@ -20,6 +20,7 @@ import {
   buildCommitHeadline,
   buildCommentMarker,
   buildUnifiedNewFilePatch,
+  DEFAULT_APPROVAL_ENVIRONMENT,
   inferLanguageForTestPath,
   isBranchProtectionOrPermissionError,
   upsertUnitAgentComment,
@@ -276,9 +277,14 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
     throw new StageError(staleMsg, EXIT_CODES.STALE_HEAD_OR_SOURCE, "commit", "stale_head");
   }
 
-  // 3. Approvers check (and block self-approval / missing approvers)
+  // 3. Approvers check (honor environment prevent_self_review policy when only PR author approved)
   const numericRunId =
     opts.runId !== undefined ? Number(opts.runId) : process.env.GITHUB_RUN_ID ? Number(process.env.GITHUB_RUN_ID) : 0;
+  const approvalEnvironment =
+    opts.approvalEnvironment ??
+    process.env.UA_APPROVAL_ENV ??
+    process.env.UA_APPROVAL_ENVIRONMENT ??
+    DEFAULT_APPROVAL_ENVIRONMENT;
   let approvers: string[] = [];
   if (opts.requireApprovals !== false) {
     const approvalOutcome = await verifyRunApprovals({
@@ -287,6 +293,7 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       repo,
       runId: numericRunId,
       prAuthorLogin: prInfo.authorLogin,
+      environmentName: approvalEnvironment,
     });
     if (!approvalOutcome.ok) {
       const msg = `Commit blocked: ${approvalOutcome.reason ?? "missing valid non-author approval"}.`;

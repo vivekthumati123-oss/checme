@@ -286,4 +286,6 @@ jobs:
           args: "--expected-head ${{ github.event.pull_request.head.sha }}"
           github-token: "${{ github.token }}"
           commit-token: "${{ secrets.COMMIT_PAT || github.token }}"
+          approval-environment: "${{ inputs.approval-environment }}"
+          approval-check: "${{ inputs.approval-check }}"
 

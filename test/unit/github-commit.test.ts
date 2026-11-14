@@ -14,6 +14,7 @@ import {
   type GitHubClientLike,
 } from "../../src/contracts";
 import { sha256Hex } from "../../src/core/context";
+import { parseEnvironmentProtectionRules, verifyRunApprovals } from "../../src/github";
 import { runCommit } from "../../src/stages/commit";
 import { runPublish } from "../../src/stages/publish";
 
@@ -273,6 +274,102 @@ describe("github integration & commit stage", () => {
       code: EXIT_CODES.POLICY_OR_HASH,
       reason: "approval_bypass",
     } satisfies Partial<StageError>);
+  });
+
+  it("allows self-approval iff environment allows it (preventSelfReview === false) and fails closed otherwise", async () => {
+    expect(
+      parseEnvironmentProtectionRules({
+        protection_rules: [{ type: "required_reviewers", prevent_self_review: false, reviewers: [{ id: 1 }] }],
+      }),
+    ).toEqual({ hasRequiredReviewers: true, preventSelfReview: false });
+
+    expect(
+      parseEnvironmentProtectionRules({
+        protection_rules: [{ type: "required_reviewers", prevent_self_review: true, reviewers: [{ id: 1 }] }],
+      }),
+    ).toEqual({ hasRequiredReviewers: true, preventSelfReview: true });
+
+    expect(
+      parseEnvironmentProtectionRules({
+        protection_rules: [{ type: "required_reviewers", reviewers: [{ id: 1 }] }],
+      }),
+    ).toEqual({ hasRequiredReviewers: true, preventSelfReview: true });
+
+    expect(
+      parseEnvironmentProtectionRules({
+        protection_rules: [{ type: "required_reviewers", prevent_self_review: false, reviewers: [] }],
+      }),
+    ).toEqual({ hasRequiredReviewers: false, preventSelfReview: true });
+
+    // Environment permits self-review -> runCommit succeeds with PR author's approval
+    const dirAllowed = makeTempDir();
+    const workDirAllowed = path.join(dirAllowed, ".unit-agent");
+    makeFinalFixture(workDirAllowed);
+    let queriedEnv = "";
+    const selfAllowedFake = makeFakeGitHub({
+      getRunApprovals: async () => ["pr-author"],
+      getEnvironment: async (_o, _r, envName) => {
+        queriedEnv = envName;
+        return { exists: true, status: 200, hasRequiredReviewers: true, preventSelfReview: false };
+      },
+    });
+    const commitRes = await runCommit({
+      workDir: workDirAllowed,
+      expectedHead: "head123",
+      runId: 4242,
+      approvalEnvironment: "custom-approval-env",
+      github: selfAllowedFake.client,
+      writeOutputs: false,
+    });
+    expect(queriedEnv).toBe("custom-approval-env");
+    expect(commitRes.committed).toBe(true);
+    expect(commitRes.approvers).toEqual(["pr-author"]);
+    expect(selfAllowedFake.commits[0]?.body).toContain("Approved-by: pr-author");
+
+    // Environment explicitly blocks self-review (preventSelfReview: true) -> exits 60
+    const dirBlocked = makeTempDir();
+    const workDirBlocked = path.join(dirBlocked, ".unit-agent");
+    makeFinalFixture(workDirBlocked);
+    const selfBlockedFake = makeFakeGitHub({
+      getRunApprovals: async () => ["pr-author"],
+      getEnvironment: async () => ({
+        exists: true,
+        status: 200,
+        hasRequiredReviewers: true,
+        preventSelfReview: true,
+      }),
+    });
+    await expect(
+      runCommit({
+        workDir: workDirBlocked,
+        expectedHead: "head123",
+        runId: 4242,
+        github: selfBlockedFake.client,
+        writeOutputs: false,
+      }),
+    ).rejects.toMatchObject({
+      code: EXIT_CODES.POLICY_OR_HASH,
+      reason: "approval_bypass",
+    } satisfies Partial<StageError>);
+
+    // Environment missing / no reviewers / API failure -> always fail closed on self-approval
+    for (const envStub of [
+      () => Promise.resolve({ exists: false, status: 404, hasRequiredReviewers: false, preventSelfReview: false }),
+      () => Promise.resolve({ exists: true, status: 200, hasRequiredReviewers: false, preventSelfReview: false }),
+      () => Promise.reject(new Error("403 forbidden")),
+    ]) {
+      const outcome = await verifyRunApprovals({
+        github: makeFakeGitHub({
+          getRunApprovals: async () => ["PR-Author"],
+          getEnvironment: envStub,
+        }).client,
+        owner: "acme",
+        repo: "app",
+        runId: 4242,
+        prAuthorLogin: "pr-author",
+      });
+      expect(outcome.ok).toBe(false);
+    }
   });
 
   it("falls back to posting patch.diff comment on branch protection failure", async () => {

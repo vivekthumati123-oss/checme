@@ -701,6 +701,7 @@ export interface GitHubClientLike {
     exists: boolean;
     status: number;
     hasRequiredReviewers: boolean;
+    preventSelfReview?: boolean;
   }>;
   getRunApprovals(owner: string, repo: string, runId: number): Promise<string[]>;
   createCommitOnBranch(params: {
