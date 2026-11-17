@@ -32,6 +32,37 @@ inputs:
     required: false
     default: "api"
     description: "Approval verification mode: api | manual"
+outputs:
+  proceed:
+    description: "Guard proceed flag"
+    value: ${{ steps.run.outputs.proceed }}
+  skip:
+    description: "Guard skip flag"
+    value: ${{ steps.run.outputs.skip }}
+  status:
+    description: "Stage status"
+    value: ${{ steps.run.outputs.status }}
+  languages:
+    description: "JSON array of planned languages"
+    value: ${{ steps.run.outputs.languages }}
+  toolchains:
+    description: "JSON object of resolved toolchains"
+    value: ${{ steps.run.outputs.toolchains }}
+  has_work:
+    description: "Detect target availability flag"
+    value: ${{ steps.run.outputs.has_work }}
+  has_notice:
+    description: "Notice emitted flag"
+    value: ${{ steps.run.outputs.has_notice }}
+  needs_repair:
+    description: "Validate repair-needed flag"
+    value: ${{ steps.run.outputs.needs_repair }}
+  has_tests:
+    description: "Publish accepted-tests-ready flag"
+    value: ${{ steps.run.outputs.has_tests }}
+  committed:
+    description: "Commit performed flag"
+    value: ${{ steps.run.outputs.committed }}
 runs:
   using: "composite"
   steps:

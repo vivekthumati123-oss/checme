@@ -49,6 +49,20 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
     expect(cliAction).toContain("--throw-deprecation");
     expect(cliAction).toContain("dist/cli.js");
 
+    const cliDoc = parseYaml(cliAction) as { outputs?: Record<string, { value?: string }> };
+    for (const requiredOut of [
+      "proceed",
+      "skip",
+      "languages",
+      "toolchains",
+      "has_work",
+      "has_notice",
+      "needs_repair",
+      "has_tests",
+    ]) {
+      expect(cliDoc.outputs?.[requiredOut]?.value).toBe(`\${{ steps.run.outputs.${requiredOut} }}`);
+    }
+
     const buildScript = readFileSync(path.join(REPO_ROOT, "scripts/build.mjs"), "utf8");
     expect(buildScript).toContain("node20");
 
