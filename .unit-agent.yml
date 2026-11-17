@@ -6,7 +6,7 @@ languages:
   java:
     framework: junit5
     buildTool: maven        # or auto, once the fix report's F7 is in
-    toolchain: "17"         # change to the JDK major your team uses (the pom compiles for 11 and newer)
+    toolchain: "21"         # change to the JDK major your team uses (the pom compiles for 11 and newer)
     installCommand: mvn -B -q dependency:go-offline
     testCommand: mvn -B -q test
     coverageFile: target/site/jacoco/jacoco.xml
