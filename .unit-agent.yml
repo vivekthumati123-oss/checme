@@ -1,0 +1,16 @@
+version: 1
+mode: report
+limits: { maxSymbolsPerPr: 10, maxFilesPerPr: 6, repairAttempts: 1 }
+targets: { patchCoverage: 80, symbolCoverageThreshold: 60 }
+languages:
+  java:
+    framework: junit5
+    buildTool: gradle        # or auto, once the fix report's F7 is in
+    toolchain: "17"          # change to the JDK major your team uses (the build compiles for 11 and newer)
+    # Wrapper commands: on Windows runners and laptops the agent resolves gradlew.bat itself.
+    installCommand: ./gradlew --no-daemon --console=plain classes testClasses
+    testCommand: ./gradlew --no-daemon --console=plain cleanTest test
+    coverageFile: build/reports/jacoco/test/jacocoTestReport.xml
+    coverageFormat: jacoco
+    sourceGlobs: ["src/main/java/**/*.java"]
+    testPathPatterns: ["src/test/java/{package}/{Name}Test.java"]
