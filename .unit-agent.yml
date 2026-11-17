@@ -5,7 +5,6 @@ targets: { patchCoverage: 80, symbolCoverageThreshold: 60 }
 languages:
   python:
     framework: pytest
-    toolchain: "3.11"      # change to the Python version your team uses
     installCommand: pip install -r requirements-dev.txt
     testCommand: python -m pytest --cov=src --cov-report=xml
     coverageFile: coverage.xml
