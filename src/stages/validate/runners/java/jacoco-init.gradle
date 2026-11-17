@@ -1,22 +1,22 @@
-allprojects {
-  plugins.withId('java') {
-    apply plugin: 'jacoco'
-    if (System.getenv('UA_JACOCO_VERSION')) {
-      jacoco {
-        toolVersion = System.getenv('UA_JACOCO_VERSION')
+allprojects { proj ->
+  proj.plugins.withId('java') {
+    // Call pluginManager on the Project instance explicitly; bare `apply` in an init script targets Gradle.
+    proj.pluginManager.apply('jacoco')
+    def jacocoVer = System.getenv('UA_JACOCO_VERSION')
+    if (jacocoVer) {
+      proj.extensions.configure('jacoco') { ext ->
+        ext.toolVersion = jacocoVer
       }
     }
-    tasks.withType(JacocoReport).configureEach {
-      reports {
-        try {
-          xml.required = true
-        } catch (MissingPropertyException ignored) {
-          xml.enabled = true
-        }
+    proj.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoReport).configureEach { reportTask ->
+      try {
+        reportTask.reports.xml.required.set(true)
+      } catch (MissingPropertyException ignored) {
+        reportTask.reports.xml.enabled = true
       }
     }
-    tasks.named('test') {
-      finalizedBy tasks.named('jacocoTestReport')
+    proj.tasks.matching { it.name == 'test' }.configureEach { testTask ->
+      testTask.finalizedBy(proj.tasks.named('jacocoTestReport'))
     }
   }
 }
