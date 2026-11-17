@@ -1,0 +1,15 @@
+version: 1
+mode: report
+limits: { maxSymbolsPerPr: 10, maxFilesPerPr: 6, repairAttempts: 1 }
+targets: { patchCoverage: 80, symbolCoverageThreshold: 60 }
+languages:
+  java:
+    framework: junit5
+    buildTool: maven        # or auto, once the fix report's F7 is in
+    toolchain: "17"         # change to the JDK major your team uses (the pom compiles for 11 and newer)
+    installCommand: mvn -B -q dependency:go-offline
+    testCommand: mvn -B -q test
+    coverageFile: target/site/jacoco/jacoco.xml
+    coverageFormat: jacoco
+    sourceGlobs: ["src/main/java/**/*.java"]
+    testPathPatterns: ["src/test/java/{package}/{Name}Test.java"]

@@ -1,0 +1,19 @@
+name: unit-agent
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+concurrency:
+  group: unit-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions: {}
+jobs:
+  unit-agent:
+    uses: vivekthumati123-oss/checme/.github/workflows/run.yml@v1-e2e-test
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    with:
+      config-path: .unit-agent.yml
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
