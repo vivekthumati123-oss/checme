@@ -169,20 +169,15 @@ describe("generate stage & LLM isolation", () => {
       content: "",
       simulateAuthError: true,
     }));
-      await expect(
-        runGenerate({
-          repoRoot: dir,
-          workDir,
-          config: cfg,
-          llmClient: fakeAuthErr,
-          writeOutputs: false,
-        }),
-      ).rejects.toMatchObject({ code: EXIT_CODES.SDK_OR_AUTH });
-
-    expect(isAuthErrorMessage("Authorization error. Your credentials may be expired or invalid. (Request ID: ABC)")).toBe(
-      true,
-    );
-    expect(isAuthErrorMessage("Model did not invoke submit_tests tool")).toBe(false);
+    await expect(
+      runGenerate({
+        repoRoot: dir,
+        workDir,
+        config: cfg,
+        llmClient: fakeAuthErr,
+        writeOutputs: false,
+      }),
+    ).rejects.toMatchObject({ code: EXIT_CODES.SDK_OR_AUTH });
 
     expect(
       isAuthErrorMessage("Authorization error. Your credentials may be expired or invalid. (Request ID: ABC)"),
