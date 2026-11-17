@@ -22,3 +22,5 @@ function truncate(text, max) {
 }
 
 module.exports = { slugify, truncate };
+
+// A5 push update check
