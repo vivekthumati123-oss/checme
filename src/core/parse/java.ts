@@ -133,9 +133,16 @@ export async function parseJavaFile(params: {
 
     const pkgPrefix = packageName ? `${packageName}.` : "";
 
-    for (let i = 0; i < body.namedChildCount; i++) {
-      const member = body.namedChild(i);
-      if (!member) continue;
+    const visitMember = (member: Parser.SyntaxNode): void => {
+      if (member.type === "enum_body_declarations") {
+        for (let j = 0; j < member.namedChildCount; j++) {
+          const enumMember = member.namedChild(j);
+          if (enumMember) {
+            visitMember(enumMember);
+          }
+        }
+        return;
+      }
 
       if (
         member.type === "class_declaration" ||
@@ -143,7 +150,7 @@ export async function parseJavaFile(params: {
         member.type === "enum_declaration"
       ) {
         visitClassContainer(member, fullClassName, classExported);
-        continue;
+        return;
       }
 
       if (member.type === "method_declaration" || member.type === "constructor_declaration") {
@@ -186,6 +193,13 @@ export async function parseJavaFile(params: {
           className: fullClassName,
           packageName,
         });
+      }
+    };
+
+    for (let i = 0; i < body.namedChildCount; i++) {
+      const member = body.namedChild(i);
+      if (member) {
+        visitMember(member);
       }
     }
   };

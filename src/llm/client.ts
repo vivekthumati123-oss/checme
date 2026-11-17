@@ -43,8 +43,11 @@ export interface CopilotSdkClientOptions {
   timeoutMs?: number;
 }
 
-function isAuthErrorMessage(msg: string): boolean {
-  return /\b(401|403|unauthorized|bad credentials|authentication|token)\b/i.test(msg);
+export function isAuthErrorMessage(msg: string): boolean {
+  return (
+    /\b(401|403|unauthorized|bad credentials|authentication|authorization|token)\b/i.test(msg) ||
+    /\bcredentials\b.*\b(expired|invalid)\b/i.test(msg)
+  );
 }
 
 export class CopilotSdkTestClient implements LlmTestClient {

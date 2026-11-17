@@ -36,7 +36,11 @@ async function main() {
       js: [
         "#!/usr/bin/env node",
         "import { createRequire as __uaCreateRequire } from 'node:module';",
+        "import { fileURLToPath as __uaFileURLToPath } from 'node:url';",
+        "import { dirname as __uaDirname } from 'node:path';",
         "const require = __uaCreateRequire(import.meta.url);",
+        "const __filename = __uaFileURLToPath(import.meta.url);",
+        "const __dirname = __uaDirname(__filename);",
       ].join("\n"),
     },
   });

@@ -16,7 +16,13 @@ import {
   type ManifestFile,
   type UnitAgentConfig,
 } from "../contracts";
-import { buildFileContextPacket, checkNeverSend, makeFileId, sha256Hex } from "../core/context";
+import {
+  buildFileContextPacket,
+  checkNeverSend,
+  detectFrameworkForLanguage,
+  makeFileId,
+  sha256Hex,
+} from "../core/context";
 import {
   computePatchCoverage,
   mapSymbolsToCoverage,
@@ -222,6 +228,20 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
 
   const skipped: Manifest["skipped"] = [];
   const warnings: string[] = [];
+  const frameworkByLang = new Map<LanguageKey, ReturnType<typeof detectFrameworkForLanguage>>();
+  const warnedUnsupportedLangs = new Set<LanguageKey>();
+  const getFrameworkCheck = (lang: LanguageKey) => {
+    let cached = frameworkByLang.get(lang);
+    if (!cached) {
+      cached = detectFrameworkForLanguage({
+        language: lang,
+        langConfig: config.languages[lang]!,
+        repoRoot: opts.repoRoot,
+      });
+      frameworkByLang.set(lang, cached);
+    }
+    return cached;
+  };
   const allCandidates: CandidateSymbolInput[] = [];
   const parsedByPath = new Map<
     string,
@@ -239,6 +259,19 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
 
     const language = matchConfiguredLanguage(repoRelPath, config);
     if (!language) continue;
+
+    const fw = getFrameworkCheck(language);
+    if (fw.unsupportedFramework) {
+      const detail =
+        fw.unsupportedFramework.reason ??
+        `Unsupported test framework "${fw.unsupportedFramework.name}" detected for ${language}.`;
+      if (!warnedUnsupportedLangs.has(language)) {
+        warnedUnsupportedLangs.add(language);
+        warnings.push(`${language}: ${detail}`);
+      }
+      skipped.push({ path: repoRelPath, reason: "unsupported_framework", detail });
+      continue;
+    }
 
     if (baselineArtifact?.perLanguage[language]?.status === "red" && opts.diffSource.kind === "git-range") {
       skipped.push({ path: repoRelPath, reason: "baseline_red", detail: `Baseline tests failed for ${language}.` });
@@ -271,11 +304,34 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
     });
 
     if (parsed.isTestFile || parsed.isGeneratedFile) continue;
-    if (parsed.tooBroken) {
-      skipped.push({ path: repoRelPath, reason: "parse_errors", detail: "AST error threshold exceeded." });
+
+    const effectiveChangedLines = resolved.includeAllLines
+      ? new Set<number>(Array.from({ length: content.split(/\r?\n/).length }, (_, i) => i + 1))
+      : changedLineSet;
+
+    const lineCov = coverageMap.get(repoRelPath);
+    // Filter by minExecutableLines after mapping real coverage so 1-line-body defs
+    // with >=2 instrumented lines (e.g. Cobertura def+body) are not dropped prematurely.
+    const candidateSymbols = parsed.allSymbols.filter(
+      (sym) => sym.exported && !sym.abstract && !sym.trivial && !sym.isTest,
+    );
+    const mappedAll = mapSymbolsToCoverage({
+      symbols: candidateSymbols,
+      changedLines: effectiveChangedLines,
+      lineCoverage: lineCov,
+    }).filter((m) => m.executableLines >= config.limits.minExecutableLines);
+
+    if (parsed.tooBroken || (parsed.hasErrors && mappedAll.length === 0)) {
+      skipped.push({
+        path: repoRelPath,
+        reason: "parse_errors",
+        detail: parsed.tooBroken
+          ? "AST error threshold exceeded."
+          : "Syntax parse errors prevented extracting any eligible symbols.",
+      });
       continue;
     }
-    if (parsed.eligibleSymbols.length === 0) {
+    if (mappedAll.length === 0) {
       skipped.push({ path: repoRelPath, reason: "no_untested_symbols", detail: "No eligible exported symbols." });
       continue;
     }
@@ -299,17 +355,6 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
       });
       continue;
     }
-
-    const effectiveChangedLines = resolved.includeAllLines
-      ? new Set<number>(Array.from({ length: content.split(/\r?\n/).length }, (_, i) => i + 1))
-      : changedLineSet;
-
-    const lineCov = coverageMap.get(repoRelPath);
-    const mappedAll = mapSymbolsToCoverage({
-      symbols: parsed.eligibleSymbols,
-      changedLines: effectiveChangedLines,
-      lineCoverage: lineCov,
-    });
 
     const includeCovered = opts.diffSource.kind === "local" && Boolean(opts.diffSource.includeCovered);
     const symbolFilter = opts.diffSource.kind === "local" ? opts.diffSource.symbols : undefined;

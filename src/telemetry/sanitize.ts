@@ -1,7 +1,35 @@
 import os from "node:os";
 
 // eslint-disable-next-line no-control-regex
+const OSC_RE = /(?:\u001b\]|\u009d)[\s\S]*?(?:\u0007|\u001b\\|\u009c)/g;
+// eslint-disable-next-line no-control-regex
+const STRING_CTRL_RE = /(?:\u001b[PX^_]|[\u0090\u0098\u009e\u009f])[\s\S]*?(?:\u001b\\|\u009c)/g;
+// eslint-disable-next-line no-control-regex
+const CSI_RE = /(?:\u001b\[|\u009b)[\u0030-\u003f]*[\u0020-\u002f]*[\u0040-\u007e]/g;
+// eslint-disable-next-line no-control-regex
+const ESC_SEQ_RE = /\u001b[\u0020-\u002f]*[\u0030-\u007e]/g;
+// eslint-disable-next-line no-control-regex
 const ANSI_RE = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]/g;
+// eslint-disable-next-line no-control-regex
+const DISALLOWED_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+const BIDI_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+/**
+ * Strip terminal escape sequences (OSC, DCS/PM/APC, CSI, charset/2-byte ESC),
+ * carriage returns, disallowed C0/C1 control characters (preserving \n and \t),
+ * and Unicode Bidi override/isolate characters.
+ */
+export function stripTerminalEscapesAndControls(input: string): string {
+  return input
+    .replace(OSC_RE, "")
+    .replace(STRING_CTRL_RE, "")
+    .replace(CSI_RE, "")
+    .replace(ESC_SEQ_RE, "")
+    .replace(ANSI_RE, "")
+    .replace(/\r\n/g, "\n")
+    .replace(DISALLOWED_CONTROL_RE, "")
+    .replace(BIDI_RE, "");
+}
 
 export const SECRET_ENV_KEY_RE =
   /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE|(?:^|_)(?:AUTH|PAT|COOKIE)(?:$|_)|(?:^|_)KEY(?:$|_))/i;
@@ -66,10 +94,7 @@ export function collectSensitiveEnvValues(env: Record<string, string | undefined
 }
 
 export function sanitizeOutput(input: string, opts: SanitizeOptions = {}): string {
-  let out = input.replace(ANSI_RE, "");
-
-  // Strip NUL bytes just in case tool output contains them.
-  out = out.replace(/\0/g, "");
+  let out = stripTerminalEscapesAndControls(input);
 
   // Replace known runner / checkout / workspace / home / tmp directories first (longest match priority).
   out = replacePathVariants(out, opts.workspaceRoot, "<WORKSPACE>");

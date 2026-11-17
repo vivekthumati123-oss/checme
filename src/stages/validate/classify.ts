@@ -1,12 +1,27 @@
 import type { FailureReason } from "../../contracts";
 import type { ExecResult } from "../../exec/exec";
 import { matchToolchainMismatch } from "../../languages/toolchains";
+import { stripTerminalEscapesAndControls } from "../../telemetry";
+
+const RUNNER_ENV_PATTERNS: readonly RegExp[] = [
+  /\bunrecognized arguments:.*--cov\b/i,
+  /\bNo module named ['"]?(?:pytest|pytest_cov|pytest-cov|coverage)['"]?/i,
+  /\bPreset\s+.+?\s+not found\b/i,
+  /\bTest environment\s+.+?\s+cannot be found\b/i,
+  /Cannot find (?:module|package) ['"](?:ts-jest|babel-jest|jest|vitest|@vitest\/[^'"]+|jest-environment-[^'"]+|@jest\/[^'"]+)['"]/i,
+];
+
+const NETWORK_ENV_RE =
+  /(?:Could not resolve|Could not GET|Connect to [^\r\n]+ failed|PKIX path building failed|Temporary failure in name resolution)/i;
+const NETWORK_ERRNO_RE = /\b(?:ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)\b/;
 
 export function classifyExecutionFailure(execRes: ExecResult): {
   reason: FailureReason;
   detail: string;
 } {
-  const combined = `${execRes.stdout}\n${execRes.stderr}`;
+  const cleanStdout = stripTerminalEscapesAndControls(execRes.stdout);
+  const cleanStderr = stripTerminalEscapesAndControls(execRes.stderr);
+  const combined = `${cleanStdout}\n${cleanStderr}`;
 
   if (execRes.timedOut) {
     return { reason: "timeout", detail: `Command timed out: ${execRes.commandString}` };
@@ -14,6 +29,13 @@ export function classifyExecutionFailure(execRes: ExecResult): {
 
   if (execRes.spawnError) {
     return { reason: "tool_missing", detail: execRes.spawnError };
+  }
+
+  if (RUNNER_ENV_PATTERNS.some((pattern) => pattern.test(combined))) {
+    return {
+      reason: "environment_error",
+      detail: "Test runner plugin, preset, or dependency is missing in the environment.",
+    };
   }
 
   const mismatch = matchToolchainMismatch(combined);
@@ -31,11 +53,7 @@ export function classifyExecutionFailure(execRes: ExecResult): {
     };
   }
 
-  if (
-    /Could not resolve|Could not GET|Connect to .* failed|PKIX path building failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|Temporary failure in name resolution/i.test(
-      combined,
-    )
-  ) {
+  if (NETWORK_ENV_RE.test(combined) || NETWORK_ERRNO_RE.test(combined)) {
     return {
       reason: "environment_error",
       detail: "Network/proxy/TLS dependency resolution failure in runner.",
@@ -46,7 +64,7 @@ export function classifyExecutionFailure(execRes: ExecResult): {
     /command not found|is not recognized as an internal or external command|No such file or directory/i.test(
       combined,
     ) &&
-    !/AssertionError|FAIL|ERROR/.test(execRes.stdout)
+    !/AssertionError|FAIL|ERROR/.test(cleanStdout)
   ) {
     return {
       reason: "tool_missing",
@@ -64,7 +82,7 @@ export function classifyExecutionFailure(execRes: ExecResult): {
   }
 
   if (
-    /error TS\d+:|SyntaxError:|COMPILATION ERROR|error: cannot find symbol|Compilation failed|FAILURES?.*Compilation/i.test(
+    /\berror\s+TS\d+:|SyntaxError:|IndentationError:|TabError:|COMPILATION ERROR|error: cannot find symbol|Compilation failed|FAILURES?.*Compilation/i.test(
       combined,
     )
   ) {

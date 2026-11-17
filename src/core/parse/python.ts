@@ -53,6 +53,47 @@ function collectDecorators(decoratedNode: Parser.SyntaxNode): string[] {
   return decorators;
 }
 
+/**
+ * Counts executable-like lines occupied by a leading docstring node within [minLine, endLine].
+ */
+function countLeadingDocstringLines(
+  bodyNode: Parser.SyntaxNode,
+  contentLines: string[],
+  minLine: number,
+  endLine: number,
+): number {
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
+    if (child.type === "comment") continue;
+    if (
+      child.type === "expression_statement" &&
+      child.namedChildCount === 1 &&
+      child.namedChild(0)?.type === "string"
+    ) {
+      const docStart = Math.max(minLine, child.startPosition.row + 1);
+      const docEnd = Math.min(endLine, child.endPosition.row + 1);
+      if (docStart <= docEnd) {
+        return estimateExecutableLines(contentLines, docStart, docEnd);
+      }
+    }
+    break;
+  }
+  return 0;
+}
+
+function hasNoCoverPragma(contentLines: string[], startLine: number, bodyNode: Parser.SyntaxNode): boolean {
+  const pragmaRe = /#\s*pragma:\s*no\s*cover\b/i;
+  const headerEndIdx = Math.max(startLine - 1, bodyNode.startPosition.row - 1);
+  for (let idx = startLine - 1; idx <= headerEndIdx && idx < contentLines.length; idx++) {
+    if (pragmaRe.test(contentLines[idx] ?? "")) {
+      return true;
+    }
+  }
+  const firstNamed = bodyNode.namedChild(0);
+  return firstNamed?.type === "comment" && pragmaRe.test(firstNamed.text);
+}
+
 function buildPythonFunctionSymbol(params: {
   filePath: string;
   contentLines: string[];
@@ -72,12 +113,16 @@ function buildPythonFunctionSymbol(params: {
   const endLine = params.fnNode.endPosition.row + 1;
   const complexity = computeCyclomaticComplexity(params.fnNode, bodyNode, PYTHON_COMPLEXITY_RULES);
 
-  // Exclude triple-quoted docstring line count roughly if needed, otherwise estimateExecutableLines handles comments/pass
-  const execLines = estimateExecutableLines(params.contentLines, startLine + 1, endLine);
+  // Exclude leading triple-quoted docstring lines so docstring-only stubs do not look executable
+  const rawExecLines = estimateExecutableLines(params.contentLines, startLine + 1, endLine);
+  const docstringLines = countLeadingDocstringLines(bodyNode, params.contentLines, startLine + 1, endLine);
+  const execLines = Math.max(0, rawExecLines - docstringLines);
   const signature = extractSignatureFromNode(params.fnNode, bodyNode).replace(/:$/, "").trim();
 
   const isAbstract = params.decorators.some((d) => d.includes("abstractmethod"));
   const isProperty = params.decorators.some((d) => d.includes("property") || d.includes(".setter"));
+  const isDunder = fnName.startsWith("__") && fnName.endsWith("__") && fnName.length > 4;
+  const noCoverPragma = hasNoCoverPragma(params.contentLines, startLine, bodyNode);
   const exported = params.classExported && !isPrivatePythonName(fnName);
   const kind: "function" | "method" | "constructor" =
     params.className && fnName === "__init__" ? "constructor" : params.className ? "method" : "function";
@@ -91,6 +136,9 @@ function buildPythonFunctionSymbol(params: {
     executableLinesFallback: execLines,
   });
 
+  if (noCoverPragma || (isDunder && fnName !== "__init__" && fnName !== "__call__")) {
+    trivial = true;
+  }
   if (isProperty && complexity === 1 && execLines <= 2) {
     trivial = true;
   }

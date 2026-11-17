@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigSchema, EXIT_CODES } from "../../src/contracts";
 import { sha256Hex } from "../../src/core/context";
-import { FakeLlmClient } from "../../src/llm";
+import { FakeLlmClient, isAuthErrorMessage } from "../../src/llm";
 import { runGenerate } from "../../src/stages/generate";
 
 const tempDirs: string[] = [];
@@ -169,15 +169,25 @@ describe("generate stage & LLM isolation", () => {
       content: "",
       simulateAuthError: true,
     }));
-    await expect(
-      runGenerate({
-        repoRoot: dir,
-        workDir,
-        config: cfg,
-        llmClient: fakeAuthErr,
-        writeOutputs: false,
-      }),
-    ).rejects.toMatchObject({ code: EXIT_CODES.SDK_OR_AUTH });
+      await expect(
+        runGenerate({
+          repoRoot: dir,
+          workDir,
+          config: cfg,
+          llmClient: fakeAuthErr,
+          writeOutputs: false,
+        }),
+      ).rejects.toMatchObject({ code: EXIT_CODES.SDK_OR_AUTH });
+
+    expect(isAuthErrorMessage("Authorization error. Your credentials may be expired or invalid. (Request ID: ABC)")).toBe(
+      true,
+    );
+    expect(isAuthErrorMessage("Model did not invoke submit_tests tool")).toBe(false);
+
+    expect(
+      isAuthErrorMessage("Authorization error. Your credentials may be expired or invalid. (Request ID: ABC)"),
+    ).toBe(true);
+    expect(isAuthErrorMessage("Model did not invoke submit_tests tool")).toBe(false);
   });
 
   it("supports --dry-run without network token or LLM calls", async () => {

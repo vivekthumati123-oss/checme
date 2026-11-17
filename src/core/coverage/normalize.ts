@@ -54,6 +54,36 @@ function resolveCoverageRecordPath(
     return cleanRepoRelative(defaultJavaRel);
   }
 
+  const isRawAbs = path.posix.isAbsolute(normRaw) || /^[A-Za-z]:\//.test(normRaw);
+
+  // For Cobertura reports carrying <sources>, resolve relative filenames against <source>
+  // prefixes before falling back to direct repoRoot-relative normalization.
+  if (!isRawAbs && opts.sources?.length && !normalizedKnown.includes(cleanRepoRelative(normRaw))) {
+    const cleanRaw = cleanRepoRelative(normRaw);
+    for (const srcPrefix of opts.sources) {
+      const normSrc = normalizeSlashes(srcPrefix).replace(/\/+$/, "");
+      if (!normSrc) continue;
+      const combined = `${normSrc}/${cleanRaw}`;
+      try {
+        const combinedRel = toRepoPath(combined, opts.repoRoot, {
+          copyRoot: opts.copyRoot,
+          workingDirectory: opts.workingDirectory,
+        });
+        if (normalizedKnown.length === 0 || normalizedKnown.includes(combinedRel)) {
+          return combinedRel;
+        }
+        const suffixFromCombinedRel = normalizedKnown.find((k) => k === combinedRel || k.endsWith(`/${combinedRel}`));
+        if (suffixFromCombinedRel) return suffixFromCombinedRel;
+      } catch {
+        const cleanCombined = cleanRepoRelative(combined);
+        const suffixFromCombined = normalizedKnown.find(
+          (k) => combined.endsWith(`/${k}`) || combined === k || cleanCombined.endsWith(`/${k}`) || cleanCombined === k,
+        );
+        if (suffixFromCombined) return suffixFromCombined;
+      }
+    }
+  }
+
   // First try direct repo normalization
   try {
     const repoRel = toRepoPath(normRaw, opts.repoRoot, {
@@ -67,23 +97,6 @@ function resolveCoverageRecordPath(
     return repoRel;
   } catch {
     // External dependency path OR container mount prefix or Cobertura <source> prefix
-  }
-
-  // Try combining Cobertura <sources> or suffix matching against known repo source files
-  if (opts.sources) {
-    for (const srcPrefix of opts.sources) {
-      const normSrc = normalizeSlashes(srcPrefix).replace(/\/+$/, "");
-      const combined = cleanRepoRelative(`${normSrc}/${normRaw}`);
-      try {
-        return toRepoPath(combined, opts.repoRoot, {
-          copyRoot: opts.copyRoot,
-          workingDirectory: opts.workingDirectory,
-        });
-      } catch {
-        const suffixFromCombined = normalizedKnown.find((k) => combined.endsWith(`/${k}`) || combined === k);
-        if (suffixFromCombined) return suffixFromCombined;
-      }
-    }
   }
 
   for (const known of normalizedKnown) {

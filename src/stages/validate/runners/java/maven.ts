@@ -41,6 +41,7 @@ export async function runMavenSingleTest(req: RunnerRequest, proj: JavaProjectRe
     config: req.config,
     useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
     offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
+    killChildrenOnExit: true,
   });
 
   const reportsDir = javaCfg.testResultsDir

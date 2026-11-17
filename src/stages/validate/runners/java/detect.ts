@@ -111,7 +111,12 @@ export function collectJavaXmlTestResults(reportsDirAbs: string, classSimpleName
   const matching = entries.filter((f) => {
     if (!f.endsWith(".xml") || !f.startsWith("TEST-")) return false;
     if (!classSimpleName) return true;
-    return f.includes(classSimpleName);
+    return (
+      f === `TEST-${classSimpleName}.xml` ||
+      f.endsWith(`.${classSimpleName}.xml`) ||
+      f.startsWith(`TEST-${classSimpleName}$`) ||
+      f.includes(`.${classSimpleName}$`)
+    );
   });
 
   const out: RunnerTestCase[] = [];

@@ -31,6 +31,64 @@ function getDepVersion(pkg: Record<string, unknown> | null, dep: string): string
   return typeof raw === "string" ? raw : null;
 }
 
+export interface UnsupportedFrameworkInfo {
+  name: string;
+  version: string | null;
+  reason?: string;
+}
+
+function stripJavaBuildComments(fileName: string, raw: string): string {
+  if (fileName.endsWith(".xml")) {
+    return raw.replace(/<!--[\s\S]*?-->/g, "").replace(/<exclusions>[\s\S]*?<\/exclusions>/gi, "");
+  }
+  return raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?:^|[\s;])\/\/.*$/gm, "");
+}
+
+function detectJavaUnsupportedFramework(
+  cleanedBuildText: string,
+  configured: string,
+): UnsupportedFrameworkInfo | undefined {
+  if (configured !== "auto" && configured !== "junit5") {
+    return undefined;
+  }
+  if (/junit-jupiter|org\.junit\.jupiter/i.test(cleanedBuildText)) {
+    return undefined;
+  }
+  if (/\btestng\b|org\.testng/i.test(cleanedBuildText)) {
+    return {
+      name: "testng",
+      version: null,
+      reason: "TestNG found in Java build file without JUnit 5 (junit-jupiter); only JUnit 5 is supported.",
+    };
+  }
+  const hasJunit4Maven = /<artifactId>\s*junit\s*<\/artifactId>/i.test(cleanedBuildText);
+  const gradleJunit4Match =
+    /junit:junit(?::(\d[^'"\s)]*))?\b|group\s*[:=]\s*['"]junit['"][^)\n]*name\s*[:=]\s*['"]junit['"]/i.exec(
+      cleanedBuildText,
+    );
+  if (!hasJunit4Maven && !gradleJunit4Match) {
+    return undefined;
+  }
+  let version: string | null = gradleJunit4Match?.[1] ?? null;
+  if (!version && hasJunit4Maven) {
+    for (const depMatch of cleanedBuildText.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)) {
+      const block = depMatch[1] ?? "";
+      if (/<artifactId>\s*junit\s*<\/artifactId>/i.test(block)) {
+        const verMatch = /<version>\s*(\d[^<$\s]*)\s*<\/version>/i.exec(block);
+        if (verMatch?.[1]) {
+          version = verMatch[1];
+          break;
+        }
+      }
+    }
+  }
+  return {
+    name: "junit4",
+    version,
+    reason: "JUnit 4 found in Java build file without JUnit 5 (junit-jupiter); only JUnit 5 is supported.",
+  };
+}
+
 export function detectFrameworkForLanguage(params: {
   language: LanguageKey;
   langConfig: LanguageConfig;
@@ -39,7 +97,7 @@ export function detectFrameworkForLanguage(params: {
   framework: FrameworkName;
   version: string | null;
   mockingLibs: string[];
-  unsupportedFramework?: { name: string; version: string | null };
+  unsupportedFramework?: UnsupportedFrameworkInfo;
 } {
   const wdAbs = path.resolve(params.repoRoot, params.langConfig.workingDirectory || ".");
   const configured = params.langConfig.framework;
@@ -63,7 +121,7 @@ export function detectFrameworkForLanguage(params: {
       /\bjest\b/i.test(params.langConfig.testCommand);
 
     let resolved: FrameworkName = "vitest";
-    let unsupportedFramework: { name: string; version: string | null } | undefined;
+    let unsupportedFramework: UnsupportedFrameworkInfo | undefined;
     if (configured === "jest" || configured === "vitest") {
       resolved = configured;
     } else if (hasVitestConfig) {
@@ -74,7 +132,11 @@ export function detectFrameworkForLanguage(params: {
       for (const fwName of ["mocha", "jasmine", "ava", "tap", "karma"] as const) {
         const depVer = getDepVersion(pkg, fwName);
         if (depVer || new RegExp(`\\b${fwName}\\b`, "i").test(params.langConfig.testCommand)) {
-          unsupportedFramework = { name: fwName, version: depVer };
+          unsupportedFramework = {
+            name: fwName,
+            version: depVer,
+            reason: `Unsupported JavaScript test framework "${fwName}" detected; only jest and vitest are supported.`,
+          };
           break;
         }
       }
@@ -102,11 +164,16 @@ export function detectFrameworkForLanguage(params: {
         mockingLibs.unshift("pytest-mock (mocker)");
       }
     }
-    let unsupportedFramework: { name: string; version: string | null } | undefined;
+    let unsupportedFramework: UnsupportedFrameworkInfo | undefined;
     if (configured === "auto") {
       const m = /\b(unittest|nose2?)\b/i.exec(params.langConfig.testCommand);
       if (m?.[1]) {
-        unsupportedFramework = { name: m[1].toLowerCase(), version: null };
+        const name = m[1].toLowerCase();
+        unsupportedFramework = {
+          name,
+          version: null,
+          reason: `Unsupported Python test framework "${name}" detected; only pytest is supported.`,
+        };
       }
     }
     return {
@@ -119,24 +186,17 @@ export function detectFrameworkForLanguage(params: {
 
   // Java
   const mockingLibs: string[] = [];
-  let buildText = "";
+  let cleanedBuildText = "";
   for (const buildFile of ["pom.xml", "build.gradle", "build.gradle.kts"]) {
     const p = path.join(wdAbs, buildFile);
     if (!existsSync(p)) continue;
     const raw = readFileSync(p, "utf8");
-    buildText += `\n${raw}`;
+    cleanedBuildText += `\n${stripJavaBuildComments(buildFile, raw)}`;
     if (/mockito/i.test(raw) && !mockingLibs.includes("org.mockito.Mockito")) {
       mockingLibs.push("org.mockito.Mockito");
     }
   }
-  let unsupportedFramework: { name: string; version: string | null } | undefined;
-  if (configured === "auto" && !/junit-jupiter/i.test(buildText)) {
-    if (/\btestng\b|org\.testng/i.test(buildText)) {
-      unsupportedFramework = { name: "testng", version: null };
-    } else if (/<artifactId>\s*junit\s*<\/artifactId>|junit:junit\b/i.test(buildText)) {
-      unsupportedFramework = { name: "junit4", version: null };
-    }
-  }
+  const unsupportedFramework = detectJavaUnsupportedFramework(cleanedBuildText, configured);
   return {
     framework: "junit5",
     version: null,

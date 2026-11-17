@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
 
-import { loadConfig, resolveTestPathForSource, runConfigCheck, tokenizeCommand } from "../config";
+import { loadConfig, resolveTestPathForSource, runConfigCheck } from "../config";
 import {
   LocalDoctorSummarySchema,
   ToolVersionsSchema,
@@ -16,9 +16,9 @@ import { parseCoverageFile } from "../core/coverage";
 import { parseSourceFile } from "../core/parse";
 import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
 import { runCommand } from "../exec/exec";
-import { buildLanguageToolVersions, resolveJavaBuildTool } from "../languages/toolchains";
+import { buildLanguageToolVersions, resolveJavaBuildTool, resolveToolchainForLanguage } from "../languages/toolchains";
 import { runBaseline } from "../stages/baseline";
-import { runRunnerPreflight } from "../stages/validate/preflight";
+import { probeTestRunner, runRunnerPreflight } from "../stages/validate/preflight";
 import { runSingleFileTests } from "../stages/validate/runners";
 import { prepareValidationWorkspace } from "../stages/validate/workspace";
 import { sanitizeFailureOutput } from "../telemetry";
@@ -264,8 +264,15 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
     for (const lang of enabledLangs) {
       const langCfg = loadedConfig.languages[lang]!;
       const wdAbs = path.resolve(opts.repoRoot, langCfg.workingDirectory || ".");
+      const tc = resolveToolchainForLanguage({ repoRoot: opts.repoRoot, language: lang, langConfig: langCfg });
+      if (tc.warning) {
+        toolWarnings.push(`${lang}: ${tc.warning}`);
+      }
       const tv = buildLanguageToolVersions({ repoRoot: opts.repoRoot, config: loadedConfig, language: lang });
       langToolMap[lang] = tv;
+      if (tv.framework && !tv.framework.supported) {
+        toolWarnings.push(`${lang}: Unsupported test framework "${tv.framework.name}".`);
+      }
 
       if (!existsSync(wdAbs)) {
         checks.push({
@@ -290,30 +297,20 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
         }
       }
 
-      const { file } = tokenizeCommand(langCfg.testCommand);
-      const binProbeCmd =
-        file === "pytest" || file === "python" || file === "python3"
-          ? [file, "--version"]
-          : file === "mvn" ||
-              file === "mvnw" ||
-              file === "./mvnw" ||
-              file === "gradle" ||
-              file === "gradlew" ||
-              file === "./gradlew"
-            ? [file, "-v"]
-            : [file, "--version"];
-      const probeRes = await runCommand(binProbeCmd[0]!, binProbeCmd.slice(1), {
-        cwd: wdAbs,
-        timeoutMs: 15_000,
+      const probe = await probeTestRunner({
+        workspaceRoot: opts.repoRoot,
+        wdAbs,
+        testCommand: langCfg.testCommand,
         config: loadedConfig,
+        language: lang,
       });
 
-      if (probeRes.spawnError || probeRes.exitCode !== 0) {
+      if (!probe.ok) {
         checks.push({
           name: `toolchain:${lang}`,
           status: "fail",
-          detail: `Configured test runner "${file}" could not be started: ${probeRes.stderr || probeRes.spawnError || `exit ${probeRes.exitCode}`}.`,
-          fix: `Ensure "${file}" is installed and on PATH, or adjust languages.${lang}.testCommand.`,
+          detail: probe.detail,
+          fix: probe.fix ?? `Ensure test runner for "${lang}" is installed, or adjust languages.${lang}.testCommand.`,
         });
         continue;
       }
@@ -350,7 +347,7 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
       checks.push({
         name: `toolchain:${lang}`,
         status: "pass",
-        detail: `${lang} runner "${file}" reachable; ${matchedSources.length} source sample(s) matched.`,
+        detail: `${probe.detail}; ${matchedSources.length} source sample(s) matched.`,
       });
     }
 

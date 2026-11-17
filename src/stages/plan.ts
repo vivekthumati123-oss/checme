@@ -145,26 +145,31 @@ export async function runPlan(opts: RunPlanOptions): Promise<PlanStageResult> {
         continue;
       }
       frameworks.java = {
-        detected: fw.framework,
+        detected: fw.unsupportedFramework?.name ?? fw.framework,
         supported: toolInfo.framework?.supported ?? true,
         buildTool: bt.buildTool,
       };
       toolchains.java = tc.entry;
     } else if (lang === "javascript") {
       frameworks.javascript = {
-        detected: fw.framework,
+        detected: fw.unsupportedFramework?.name ?? fw.framework,
         supported: toolInfo.framework?.supported ?? true,
       };
       toolchains.node = tc.entry;
     } else if (lang === "python") {
       frameworks.python = {
-        detected: fw.framework,
+        detected: fw.unsupportedFramework?.name ?? fw.framework,
         supported: toolInfo.framework?.supported ?? true,
       };
       toolchains.python = tc.entry;
     }
 
     if (toolInfo.framework && !toolInfo.framework.supported) {
+      warnings.push(
+        fw.unsupportedFramework?.reason
+          ? `${lang}: ${fw.unsupportedFramework.reason}`
+          : `${lang}: Unsupported test framework "${toolInfo.framework.name}".`,
+      );
       skipped.push({
         language: lang,
         reason: "unsupported_framework",

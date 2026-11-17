@@ -105,6 +105,7 @@ export async function runPytestSingleFile(req: RunnerRequest): Promise<RunnerOut
       extraEnv: extraPythonPath ? { PYTHONPATH: extraPythonPath } : undefined,
       useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
       offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
+      killChildrenOnExit: true,
     });
 
     const tests = parseJunitXmlReport(xmlOut);

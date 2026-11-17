@@ -89,6 +89,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
         cwd,
         timeoutMs: config.baseline.timeoutMinutes * 60_000,
         config,
+        killChildrenOnExit: true,
       });
 
       if (res.timedOut) {

@@ -91,6 +91,15 @@ describe("coverage parsers & normalization", () => {
     expect(patch.totalChangedExecutableLines).toBe(2);
     expect(patch.coveredChangedLines).toBe(1);
     expect(patch.patchCoveragePct).toBe(50);
+
+    // Also resolves <source> when knownSourceFiles is omitted (baseline flow).
+    const baselineMap = normalizeCoverageContent({
+      format: "cobertura",
+      content: xml,
+      repoRoot,
+    });
+    expect(baselineMap.get("backend/src/tax.py")?.get(5)).toBe(1);
+    expect(baselineMap.has("tax.py")).toBe(false);
   });
 
   it("parses JaCoCo XML and joins package + sourcefile with known module paths", () => {

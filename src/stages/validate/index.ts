@@ -125,7 +125,8 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
   const manifest = opts.manifest ?? loadManifest(opts.workDir, opts.manifestPath);
   const attempt = Math.max(1, opts.attempt ?? 1);
   const snapAttempt: 1 | 2 = attempt === 1 ? 1 : 2;
-  const isFinalAttempt = opts.isFinalAttempt ?? attempt >= 2;
+  const maxAttempts = 1 + Math.max(0, config.limits.repairAttempts);
+  const isFinalAttempt = opts.isFinalAttempt ?? attempt >= maxAttempts;
   const phase = opts.phase ?? "all";
   const stageName = attempt === 1 ? "validate1" : "validate2";
   const stageDirName =
@@ -249,15 +250,17 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         continue;
       }
 
+      const javaPackageName =
+        /^package\s+([A-Za-z0-9_.]+)\s*;/.exec(mf.importHint)?.[1] ??
+        /(?:^|\/)src\/(?:main|test)\/java\/(.+)\/[^/]+\.java$/.exec(mf.path)?.[1]?.replace(/\//g, ".");
+
       const allowedByPattern = matchesAllowedTestPath({
         testPath: safeTestRel,
         sourcePath: mf.path,
         language: mf.language,
         patterns: langCfg.testPathPatterns,
         generatedSuffix: langCfg.generatedSuffix,
-        packageName:
-          /^package\s+([A-Za-z0-9_.]+)\s*;/.exec(mf.importHint)?.[1] ??
-          /(?:^|\/)src\/(?:main|test)\/java\/(.+)\/[^/]+\.java$/.exec(mf.path)?.[1]?.replace(/\//g, "."),
+        packageName: javaPackageName,
         className: mf.testClassName?.replace(/(AgentTest|Test)$/, ""),
       });
 
@@ -477,6 +480,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         config,
         sourcePath: mf.path,
         testPath: safeTestRel,
+        packageName: javaPackageName,
         javaTestClassName: mf.testClassName,
         withCoverage: true,
         offline: Boolean(opts.offline),
@@ -547,13 +551,20 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           const passingCases = runRes.tests.filter((t) => t.status === "pass");
           const failingCases = runRes.tests.filter((t) => t.status === "fail");
 
-          // D25: Partial failure -> AST prune failing tests and re-verify
-          if (passingCases.length > 0 && failingCases.length > 0) {
+          // D25: Partial failure -> AST prune failing tests and re-verify on the final attempt
+          if (isFinalAttempt && passingCases.length > 0 && failingCases.length > 0) {
+            const failingNamesForPrune =
+              mf.language === "java"
+                ? failingCases.flatMap((t) => {
+                    const base = t.name.replace(/\([^)]*\)(?:\[[^\]]*\])?$/, "").trim();
+                    return base && base !== t.name ? [t.name, base] : [t.name];
+                  })
+                : failingCases.map((t) => t.name);
             const derived = await deriveFinalContent({
               language: mf.language,
               testPath: safeTestRel,
               content: currentContent,
-              failingTestNames: failingCases.map((t) => t.name),
+              failingTestNames: failingNamesForPrune,
               repoRoot: opts.repoRoot,
               configEol: config.files.eol,
               provenanceHeader: config.policy.provenanceHeader,
@@ -819,7 +830,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
 
   if (opts.writeOutputs !== false) {
     const needsRepairOut =
-      envErrorBlock !== null ? "" : attempt === 1 && repairableFailures.length > 0 ? "true" : "false";
+      envErrorBlock !== null ? "" : !isFinalAttempt && repairableFailures.length > 0 ? "true" : "false";
     writeGitHubOutput({
       accepted_count: finalFiles.length,
       needs_repair_count: repairableFailures.length,

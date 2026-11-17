@@ -4,7 +4,17 @@ import path from "node:path";
 import { Command } from "commander";
 
 import { loadConfig, runConfigCheck } from "./config";
-import { ARTIFACTS, EXIT_CODES, StageError, StageStatusSchema, type ExitCode, type StageName } from "./contracts";
+import {
+  ARTIFACTS,
+  EXIT_CODES,
+  ManifestSchema,
+  PlanOutputSchema,
+  StageError,
+  StageStatusSchema,
+  type ExitCode,
+  type GitHubClientLike,
+  type StageName,
+} from "./contracts";
 import { resolveDiffRange, type PullRequestEventLike } from "./core/git/range";
 import { createGitHubClientsFromEnv } from "./github";
 import {
@@ -127,6 +137,55 @@ function hasAnyNoticeStatus(workDir: string): boolean {
       return true;
     }
   }
+
+  const planPath = path.join(workDir, ARTIFACTS.prepare.dir, "plan.json");
+  if (existsSync(planPath)) {
+    try {
+      const rawPlan = JSON.parse(readFileSync(planPath, "utf8")) as { skipped?: unknown };
+      const parsed = PlanOutputSchema.safeParse(rawPlan);
+      if (parsed.success) {
+        if (parsed.data.skipped.length > 0) return true;
+      } else if (Array.isArray(rawPlan?.skipped) && rawPlan.skipped.length > 0) {
+        return true;
+      }
+    } catch {
+      // ignore malformed optional plan
+    }
+  }
+
+  const baselinePath = path.join(workDir, ARTIFACTS.prepare.dir, "baseline.json");
+  if (existsSync(baselinePath)) {
+    try {
+      const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as { status?: unknown };
+      if (baseline?.status === "red") return true;
+    } catch {
+      // ignore malformed optional baseline
+    }
+  }
+
+  const manifestPath = path.join(workDir, ARTIFACTS.prepare.dir, "manifest.json");
+  if (existsSync(manifestPath)) {
+    try {
+      const rawManifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+        files?: unknown;
+        skipped?: unknown;
+      };
+      const parsed = ManifestSchema.safeParse(rawManifest);
+      if (parsed.success) {
+        if (parsed.data.files.length === 0 && parsed.data.skipped.length > 0) return true;
+      } else if (
+        Array.isArray(rawManifest?.files) &&
+        rawManifest.files.length === 0 &&
+        Array.isArray(rawManifest?.skipped) &&
+        rawManifest.skipped.length > 0
+      ) {
+        return true;
+      }
+    } catch {
+      // ignore malformed optional manifest
+    }
+  }
+
   return false;
 }
 
@@ -348,8 +407,25 @@ export function buildProgram(track?: CliTrackContext): Command {
         }
         return;
       }
-      const eventMeta = readEventMeta(cmdOpts.event);
-      const github = opts.offline || cmdOpts.dryRun ? undefined : createGitHubClientsFromEnv().github;
+      let eventMeta: ParsedEventMeta = {
+        eventPath: cmdOpts.event,
+        payload: null,
+        repoFullName: process.env.GITHUB_REPOSITORY || undefined,
+      };
+      try {
+        eventMeta = readEventMeta(cmdOpts.event);
+      } catch {
+        // Missing or malformed event payload degrades cleanly for notice generation
+      }
+      let github: GitHubClientLike | undefined;
+      if (!opts.offline && !cmdOpts.dryRun) {
+        try {
+          github = createGitHubClientsFromEnv().github;
+        } catch {
+          // Missing/invalid GITHUB_TOKEN degrades gracefully to GITHUB_STEP_SUMMARY + notice.md
+          github = undefined;
+        }
+      }
       const markdown = await runNotice({
         workDir,
         repoRoot,

@@ -71,6 +71,7 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
     extraEnv: javaCfg.coverage.jacocoVersion ? { UA_JACOCO_VERSION: javaCfg.coverage.jacocoVersion } : undefined,
     useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
     offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
+    killChildrenOnExit: true,
   });
 
   const reportsDir = javaCfg.testResultsDir

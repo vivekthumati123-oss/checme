@@ -70,6 +70,7 @@ export async function runVitestSingleFile(req: RunnerRequest): Promise<RunnerOut
       config: req.config,
       useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
       offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
+      killChildrenOnExit: true,
     });
 
     const tests = parseJsJsonReport(jsonOut);

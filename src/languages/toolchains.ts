@@ -29,6 +29,18 @@ export interface DetectedToolchainResult {
   tier: "tested" | "best-effort";
 }
 
+function withRunnerDefaultWarning(
+  checkReason: string | undefined,
+  source: ToolchainEntry["source"],
+  runtimeLabel: string,
+): string | undefined {
+  if (checkReason) return checkReason;
+  if (source === "runner-default") {
+    return `No version configured or detected; using runner-default ${runtimeLabel}.`;
+  }
+  return undefined;
+}
+
 function readFirstExisting(paths: readonly string[]): { absPath: string; content: string } | null {
   for (const p of paths) {
     if (existsSync(p)) {
@@ -124,7 +136,7 @@ export function resolveToolchainForLanguage(params: {
       entry: { version, file: fileRel, source },
       supported: check.supported,
       tier: check.tier,
-      warning: check.reason,
+      warning: withRunnerDefaultWarning(check.reason, source, `Node ${version}`),
     };
   }
 
@@ -176,7 +188,7 @@ export function resolveToolchainForLanguage(params: {
       entry: { version, file: fileRel, source },
       supported: check.supported,
       tier: check.tier,
-      warning: check.reason,
+      warning: withRunnerDefaultWarning(check.reason, source, `Python ${version}`),
     };
   }
 
@@ -250,7 +262,7 @@ export function resolveToolchainForLanguage(params: {
     },
     supported: check.supported,
     tier: check.tier,
-    warning: check.reason,
+    warning: withRunnerDefaultWarning(check.reason, source, `JDK ${version}`),
   };
 }
 

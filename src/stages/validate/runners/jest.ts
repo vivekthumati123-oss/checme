@@ -38,6 +38,7 @@ export async function runJestSingleFile(req: RunnerRequest): Promise<RunnerOutco
       config: req.config,
       useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
       offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
+      killChildrenOnExit: true,
     });
 
     const tests = parseJsJsonReport(jsonOut);
