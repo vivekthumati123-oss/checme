@@ -80,7 +80,19 @@ runs:
         UA_APPROVAL_CHECK: ${{ inputs.approval-check }}
       run: |
         set -euo pipefail
-        DIST_DIR="$(cd "${{ github.action_path }}/../../../dist" && pwd)"
+        ACTION_ROOT="$(cd "${{ github.action_path }}/../../.." && pwd)"
+        DIST_DIR="$ACTION_ROOT/dist"
+        if [ ! -f "$DIST_DIR/cli.js" ]; then
+          if [ -f "$ACTION_ROOT/scripts/build.mjs" ] && [ -f "$ACTION_ROOT/package.json" ]; then
+            if [ ! -d "$ACTION_ROOT/node_modules" ]; then
+              npm ci --prefix "$ACTION_ROOT" --no-audit --no-fund >/dev/null
+            fi
+            npm run --prefix "$ACTION_ROOT" build:unit-agent >/dev/null
+          else
+            echo "Missing $DIST_DIR/cli.js" >&2
+            exit 1
+          fi
+        fi
         if { [ "$UA_COMMAND" = "generate" ] || [ "$UA_COMMAND" = "repair" ]; } && [ ! -d "$DIST_DIR/node_modules/@github/copilot-sdk" ] && ! printf ' %s ' "$UA_ARGS" | grep -qE ' (--dry-run|--fake-llm) '; then
           if [ ! -f "$DIST_DIR/package.json" ]; then printf '{"private":true}\n' > "$DIST_DIR/package.json"; fi
           npm install --prefix "$DIST_DIR" --no-save --no-package-lock --no-audit --no-fund @github/copilot-sdk@1.0.16 >/dev/null

@@ -5,6 +5,7 @@ import { loadConfig, tokenizeCommand } from "../config";
 import {
   ARTIFACTS,
   PlanOutputSchema,
+  type JavaConfig,
   type LanguageKey,
   type LoggerLike,
   type PlanOutput,
@@ -12,12 +13,15 @@ import {
 } from "../contracts";
 import { computePatchCoverage, parseCoverageFile, type CoverageLineMap } from "../core/coverage";
 import { runCommand } from "../exec/exec";
+import { matchToolchainMismatch } from "../languages/toolchains";
 import { sanitizeLogTail, writeGitHubOutput } from "../telemetry";
+import { runJavaCommandWithWrapperHandling } from "./validate/runners/java/detect";
 
 export interface BaselineLanguageState {
   status: "green" | "red" | "no_coverage";
   patchCoveragePct: number | null;
   detail?: string;
+  mismatchReason?: "toolchain_mismatch" | "unsupported_tool_version" | "wrapper_unavailable";
 }
 
 export interface BaselineArtifact {
@@ -85,12 +89,31 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
     if (config.baseline.mode === "run") {
       const cwd = path.resolve(opts.repoRoot, langCfg.workingDirectory || ".");
       const { file, args } = tokenizeCommand(langCfg.testCommand);
-      const res = await runCommand(file, args, {
-        cwd,
-        timeoutMs: config.baseline.timeoutMinutes * 60_000,
-        config,
-        killChildrenOnExit: true,
-      });
+      let res;
+      let wrapperUnavailable: { host?: string; detail: string } | undefined;
+      if (lang === "java") {
+        const handled = await runJavaCommandWithWrapperHandling({
+          repoRoot: opts.repoRoot,
+          workDir: opts.workDir,
+          config,
+          javaConfig: langCfg as JavaConfig,
+          cwd,
+          file,
+          args,
+          timeoutMs: config.baseline.timeoutMinutes * 60_000,
+          killChildrenOnExit: true,
+          logger: opts.logger,
+        });
+        res = handled.execRes;
+        wrapperUnavailable = handled.wrapperUnavailable;
+      } else {
+        res = await runCommand(file, args, {
+          cwd,
+          timeoutMs: config.baseline.timeoutMinutes * 60_000,
+          config,
+          killChildrenOnExit: true,
+        });
+      }
 
       if (res.timedOut) {
         const msg = `baseline exceeded ${config.baseline.timeoutMinutes} minutes; set baseline.mode: skip or a faster testCommand`;
@@ -103,14 +126,34 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
         continue;
       }
 
-      if (res.exitCode !== 0) {
-        const tail = sanitizeLogTail(`${res.stdout}\n${res.stderr}`, { repoRoot: opts.repoRoot }, 40);
+      if (wrapperUnavailable) {
         perLanguage[lang] = {
           status: "red",
           patchCoveragePct: null,
-          detail: tail,
+          detail: wrapperUnavailable.detail,
+          mismatchReason: "wrapper_unavailable",
         };
-        opts.logger?.warn({ language: lang, exitCode: res.exitCode }, "Baseline tests failed (red)");
+        opts.logger?.warn({ language: lang, host: wrapperUnavailable.host }, wrapperUnavailable.detail);
+        continue;
+      }
+
+      if (res.exitCode !== 0) {
+        const combined = `${res.stdout}\n${res.stderr}`;
+        const mismatch = matchToolchainMismatch(combined);
+        const tail = sanitizeLogTail(combined, { repoRoot: opts.repoRoot }, 40);
+        const detail = mismatch
+          ? `${mismatch.detail} — Incompatible toolchain/build-tool version. Select a compatible runtime toolchain or upgrade the wrapper. (${tail})`
+          : tail;
+        perLanguage[lang] = {
+          status: "red",
+          patchCoveragePct: null,
+          detail,
+          ...(mismatch ? { mismatchReason: mismatch.reason } : {}),
+        };
+        opts.logger?.warn(
+          { language: lang, exitCode: res.exitCode, mismatchReason: mismatch?.reason },
+          mismatch ? `Baseline ${mismatch.reason}: ${mismatch.detail}` : "Baseline tests failed (red)",
+        );
         continue;
       }
     }

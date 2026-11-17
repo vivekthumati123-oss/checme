@@ -274,8 +274,14 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
       continue;
     }
 
-    if (baselineArtifact?.perLanguage[language]?.status === "red" && opts.diffSource.kind === "git-range") {
-      skipped.push({ path: repoRelPath, reason: "baseline_red", detail: `Baseline tests failed for ${language}.` });
+    const baseState = baselineArtifact?.perLanguage[language];
+    if (baseState?.status === "red" && opts.diffSource.kind === "git-range") {
+      const skipReason = baseState.mismatchReason ?? "baseline_red";
+      const skipDetail =
+        skipReason !== "baseline_red" && baseState.detail
+          ? baseState.detail.split("\n")[0]!.slice(0, 240)
+          : `Baseline tests failed for ${language}.`;
+      skipped.push({ path: repoRelPath, reason: skipReason, detail: skipDetail });
       continue;
     }
 

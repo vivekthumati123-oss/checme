@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { JavaConfig } from "../../../contracts";
 import type { RunnerOutcome, RunnerRequest } from "./common";
 import { resolveJavaExecutionTarget } from "./java/detect";
@@ -8,6 +10,7 @@ export async function runJavaSingleFile(req: RunnerRequest): Promise<RunnerOutco
   const javaCfg = req.languageConfig as JavaConfig;
   const proj = resolveJavaExecutionTarget({
     workspaceRoot: req.workspaceRoot,
+    workDir: req.workDir ?? path.join(req.repoRoot, ".unit-agent"),
     javaConfig: javaCfg,
     sourcePath: req.sourcePath,
     testPath: req.testPath,

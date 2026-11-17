@@ -7,6 +7,7 @@ import {
   EXIT_CODES,
   PlanOutputSchema,
   StageError,
+  type JavaConfig,
   type LanguageKey,
   type LoggerLike,
   type PlanOutput,
@@ -15,6 +16,7 @@ import {
 import { runCommand } from "../exec/exec";
 import { matchToolchainMismatch } from "../languages/toolchains";
 import { sanitizeFailureOutput } from "../telemetry";
+import { runJavaCommandWithWrapperHandling } from "./validate/runners/java/detect";
 
 export interface RunInstallOptions {
   repoRoot: string;
@@ -59,12 +61,35 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
     const cwd = path.resolve(opts.repoRoot, langCfg.workingDirectory || ".");
     const { file, args } = tokenizeCommand(langCfg.installCommand);
     const startMs = Date.now();
-    const res = await runCommand(file, args, {
-      cwd,
-      timeoutMs: config.limits.runTimeoutMinutes * 60_000,
-      config,
-    });
+    let res;
+    let wrapperUnavailable: { host?: string; detail: string } | undefined;
+    if (lang === "java") {
+      const handled = await runJavaCommandWithWrapperHandling({
+        repoRoot: opts.repoRoot,
+        workDir: opts.workDir,
+        config,
+        javaConfig: langCfg as JavaConfig,
+        cwd,
+        file,
+        args,
+        timeoutMs: config.limits.runTimeoutMinutes * 60_000,
+        logger: opts.logger,
+      });
+      res = handled.execRes;
+      wrapperUnavailable = handled.wrapperUnavailable;
+    } else {
+      res = await runCommand(file, args, {
+        cwd,
+        timeoutMs: config.limits.runTimeoutMinutes * 60_000,
+        config,
+      });
+    }
     const durationMs = Date.now() - startMs;
+
+    if (wrapperUnavailable) {
+      opts.logger?.error({ language: lang, host: wrapperUnavailable.host }, wrapperUnavailable.detail);
+      throw new StageError(wrapperUnavailable.detail, EXIT_CODES.CONFIG_OR_INPUT, "prepare", "wrapper_unavailable");
+    }
 
     if (res.exitCode !== 0) {
       const combined = `${res.stdout}\n${res.stderr}`;

@@ -12,8 +12,15 @@ import {
 } from "../../src/languages/toolchains";
 import { runBaseline } from "../../src/stages/baseline";
 import { runDetect } from "../../src/stages/detect";
+import { runNotice } from "../../src/stages/notice";
 import { runPlan } from "../../src/stages/plan";
 import { resolveOfflineScriptPath } from "../../src/stages/validate/runners";
+import {
+  matchWrapperBootstrapFailure,
+  recordJavaWrapperFallback,
+  resolveJavaExecutionTarget,
+  rewriteWrapperCommandToSystem,
+} from "../../src/stages/validate/runners/java/detect";
 
 const tempDirs: string[] = [];
 
@@ -246,5 +253,78 @@ describe("plan, baseline, and detect end-to-end on real git repo", () => {
     const resolved = resolveOfflineScriptPath(extRepo);
     expect(path.resolve(resolved)).not.toBe(path.resolve(extRepo, "scripts", "run-offline.sh"));
     expect(resolved.replace(/\\/g, "/")).toMatch(/\/scripts\/run-offline\.sh$/);
+  });
+
+  it("detects Gradle wrapper download failure and resolves recorded system fallback", () => {
+    const fail = matchWrapperBootstrapFailure(
+      'Downloading https://services.invalid.example/distributions/gradle-9.9.9-bin.zip\nException in thread "main" java.net.UnknownHostException: services.invalid.example\n\tat org.gradle.wrapper.Install.forceFetch(SourceFile:2)',
+    );
+    expect(fail.isWrapperError).toBe(true);
+    expect(fail.host).toBe("services.invalid.example");
+    expect(rewriteWrapperCommandToSystem("./gradlew", "gradle")).toBe("gradle");
+
+    const repo = makeTempDir();
+    const workDir = path.join(repo, ".unit-agent");
+    writeFileSync(path.join(repo, "build.gradle"), "plugins { id 'java' }\n", "utf8");
+    writeFileSync(path.join(repo, "gradlew"), "#!/bin/sh\n", "utf8");
+    recordJavaWrapperFallback(workDir, "gradle", "gradle", "fallback warning");
+
+    const javaCfg = ConfigSchema.parse({
+      version: 1,
+      languages: {
+        java: {
+          testCommand: "./gradlew test",
+          coverageFile: "build/reports/jacoco/test/jacocoTestReport.xml",
+          coverageFormat: "jacoco",
+          sourceGlobs: ["src/**/*.java"],
+          testPathPatterns: ["src/test/java/{package}/{Name}Test.java"],
+        },
+      },
+    }).languages.java!;
+
+    const target = resolveJavaExecutionTarget({
+      workspaceRoot: repo,
+      workDir,
+      javaConfig: javaCfg,
+      sourcePath: "src/main/java/App.java",
+      testPath: "src/test/java/AppTest.java",
+    });
+    expect(target.executable).toBe("gradle");
+  });
+
+  it("classifies baseline toolchain mismatch (Gradle 7.6.4 + JDK 21) and surfaces notice reason", async () => {
+    const repo = makeTempDir();
+    const workDir = path.join(repo, ".unit-agent");
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      baseline: { mode: "run", timeoutMinutes: 1 },
+      languages: {
+        java: {
+          testCommand: "node -e \"console.error('BUG! Unsupported class file major version 65'); process.exit(1)\"",
+          coverageFile: "build/reports/jacoco/test/jacocoTestReport.xml",
+          coverageFormat: "jacoco",
+          sourceGlobs: ["src/**/*.java"],
+          testPathPatterns: ["src/test/java/{package}/{Name}Test.java"],
+        },
+      },
+    });
+
+    const baseRes = await runBaseline({
+      repoRoot: repo,
+      workDir,
+      config: cfg,
+      plan: { schemaVersion: 1, languages: ["java"], toolchains: {}, frameworks: {}, skipped: [], warnings: [] },
+      writeOutputs: false,
+    });
+    expect(baseRes.perLanguage.java?.mismatchReason).toBe("toolchain_mismatch");
+    mkdirSync(path.join(workDir, "prepare"), { recursive: true });
+    writeFileSync(path.join(workDir, "prepare", "baseline.json"), JSON.stringify(baseRes, null, 2), "utf8");
+
+    const md = await runNotice({
+      repoRoot: repo,
+      workDir,
+      dryRun: true,
+    });
+    expect(md).toContain("toolchain_mismatch");
   });
 });

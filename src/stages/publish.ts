@@ -36,6 +36,7 @@ import {
   verifyApprovalEnvironment,
 } from "../github";
 import { loadPromptTemplate } from "../llm";
+import { loadOptionalResolvedConfig } from "./detect";
 import {
   createInitialMetrics,
   incrementReasonCount,
@@ -360,6 +361,7 @@ export function renderPublishSummaryMarkdown(params: {
   upstreamStatuses?: StageStatus[];
   approvalEnvironment?: string;
   approvalWarning?: string;
+  llmRequests?: number;
 }): string {
   const { finalArtifact, report } = params;
   const marker = buildCommentMarker(finalArtifact.headSha);
@@ -458,6 +460,25 @@ export function renderPublishSummaryMarkdown(params: {
       .map((r) => `- \`${sanitizeForMarkdown(r.testPath, 160)}\`: ${sanitizeForMarkdown(r.reason, 200)}`);
     extras.push("**Rejected Files**", ...rejLines);
   }
+  const extraNotes = finalArtifact.notes.filter((n) => n && n !== params.approvalWarning);
+  if (extraNotes.length > 0) {
+    const noteLines = extraNotes.slice(0, 5).map((n) => `- ${sanitizeForMarkdown(n, 240)}`);
+    extras.push("**Warnings / Notes**", ...noteLines);
+  }
+
+  const toolParts: string[] = [`Agent Node ${sanitizeForMarkdown(finalArtifact.toolVersions.agentNode, 40)}`];
+  for (const [lang, info] of Object.entries(finalArtifact.toolVersions.languages)) {
+    const rt = info.runtime?.version ?? info.runtime?.source ?? "unknown";
+    const bt = info.buildTool?.version ? `/${info.buildTool.version}` : "";
+    const fw = info.framework
+      ? info.framework.version
+        ? `${info.framework.name}@${info.framework.version}`
+        : info.framework.name
+      : "unknown";
+    toolParts.push(`${sanitizeForMarkdown(lang, 20)}: ${sanitizeForMarkdown(`${rt}${bt}, ${fw} (${info.tier})`, 80)}`);
+  }
+  const reqPart = typeof params.llmRequests === "number" ? ` | LLM requests: ${params.llmRequests}` : "";
+  extras.push(`_Tooling: ${toolParts.join("; ")}${reqPart}_`);
 
   const fullMarkdown = extras.length > 0 ? `${rendered.trim()}\n\n${extras.join("\n")}\n` : `${rendered.trim()}\n`;
   return truncateCommentMarkdown(fullMarkdown);
@@ -468,7 +489,30 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   markdown: string;
   commentId?: number;
 }> {
-  const config = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
+  const v2Path = path.join(opts.workDir, ARTIFACTS.validate2.dir, "report.json");
+  const v1Path = path.join(opts.workDir, ARTIFACTS.validate1.dir, "report.json");
+  const finalFile = opts.finalPath ?? path.join(opts.workDir, ARTIFACTS.final.dir, "final.json");
+  const prepareNoticePath = path.join(opts.workDir, ARTIFACTS.prepare.dir, "notice.md");
+  const hasValidationOutputs =
+    Boolean(opts.report) ||
+    Boolean(opts.finalArtifact) ||
+    Boolean(opts.reportPath && existsSync(opts.reportPath)) ||
+    existsSync(v2Path) ||
+    existsSync(v1Path) ||
+    existsSync(finalFile);
+
+  let config =
+    opts.config ??
+    loadOptionalResolvedConfig({
+      repoRoot: opts.repoRoot,
+      configPath: opts.configPath,
+      fallbackDirs: [path.join(opts.workDir, ARTIFACTS.prepare.dir), path.join(opts.workDir, ARTIFACTS.final.dir)],
+    });
+  const isNoticeOnly = !hasValidationOutputs && existsSync(prepareNoticePath);
+  if (!config && !isNoticeOnly) {
+    config = loadConfig(opts.repoRoot, opts.configPath).config;
+  }
+  const targetPct = config?.targets.patchCoverage ?? 80;
   const envName = opts.approvalEnvironment ?? process.env.UA_APPROVAL_ENV ?? APPROVE_ENV_NAME;
   const checkMode = (opts.approvalCheck ?? process.env.UA_APPROVAL_CHECK ?? "api") as "api" | "manual";
 
@@ -483,17 +527,6 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   );
 
   // Notice-only branch when prepare produced notice without validation outputs
-  const v2Path = path.join(opts.workDir, ARTIFACTS.validate2.dir, "report.json");
-  const v1Path = path.join(opts.workDir, ARTIFACTS.validate1.dir, "report.json");
-  const finalFile = opts.finalPath ?? path.join(opts.workDir, ARTIFACTS.final.dir, "final.json");
-  const prepareNoticePath = path.join(opts.workDir, ARTIFACTS.prepare.dir, "notice.md");
-  const hasValidationOutputs =
-    Boolean(opts.report) ||
-    Boolean(opts.finalArtifact) ||
-    Boolean(opts.reportPath && existsSync(opts.reportPath)) ||
-    existsSync(v2Path) ||
-    existsSync(v1Path) ||
-    existsSync(finalFile);
 
   const reqCheck = validateRequiredInputs(opts.workDir, jobResults, Boolean(opts.report && opts.finalArtifact));
   if (!reqCheck.ok) {
@@ -524,7 +557,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       headRef: process.env.GITHUB_HEAD_REF || "HEAD",
       mode: "report",
       files: [],
-      patchCoverage: { beforePct: null, projectedPct: null, targetPct: config.targets.patchCoverage },
+      patchCoverage: { beforePct: null, projectedPct: null, targetPct },
       toolVersions: { agentNode: process.versions.node, languages: {}, warnings: [failMsg] },
       notes: [failMsg],
       rejected: [],
@@ -567,7 +600,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       headRef: process.env.GITHUB_HEAD_REF || "HEAD",
       mode: "report",
       files: [],
-      patchCoverage: { beforePct: null, projectedPct: null, targetPct: config.targets.patchCoverage },
+      patchCoverage: { beforePct: null, projectedPct: null, targetPct },
       toolVersions: { agentNode: process.versions.node, languages: {}, warnings: [] },
       notes: [noticeText],
       rejected: [],
@@ -587,6 +620,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     return { finalArtifact: noticeFinal, markdown, commentId };
   }
 
+  const activeConfig = config ?? loadConfig(opts.repoRoot, opts.configPath).config;
   let report = opts.report;
   let finalArtifact = opts.finalArtifact;
 
@@ -597,7 +631,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     const assembled = await assembleFinalFromSnapshots({
       repoRoot: opts.repoRoot,
       workDir: opts.workDir,
-      config,
+      config: activeConfig,
       manifest,
       report1: r1,
       report2: r2,
@@ -632,7 +666,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   }
 
   // F3: Verify approval environment when mode === "propose"
-  let effectiveMode = config.mode;
+  let effectiveMode = activeConfig.mode;
   let approvalWarning: string | undefined;
 
   if (effectiveMode === "propose" && finalArtifact.files.length > 0 && opts.github && !opts.dryRun) {
@@ -655,10 +689,25 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     }
   }
 
+  const planWarnings: string[] = [];
+  const planObj = tryReadJsonFile(
+    path.join(opts.workDir, ARTIFACTS.prepare.dir, "plan.json"),
+    (r) => r as { warnings?: string[] },
+  );
+  if (planObj && Array.isArray(planObj.warnings)) {
+    for (const w of planObj.warnings) {
+      if (typeof w === "string" && w.trim()) planWarnings.push(w);
+    }
+  }
+  const combinedNotes = [...finalArtifact.notes];
+  for (const w of [...planWarnings, ...(approvalWarning ? [approvalWarning] : [])]) {
+    if (!combinedNotes.includes(w)) combinedNotes.push(w);
+  }
+
   const updatedFinal = FinalSchema.parse({
     ...finalArtifact,
     mode: effectiveMode,
-    notes: approvalWarning ? [...finalArtifact.notes, approvalWarning] : finalArtifact.notes,
+    notes: combinedNotes,
   });
 
   mkdirSync(path.dirname(finalFile), { recursive: true });
@@ -666,7 +715,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
 
   // Write final/resolved-config.json so checkout-less approve-and-commit can honor commit/policy config
   const finalDir = path.join(opts.workDir, ARTIFACTS.final.dir);
-  writeFileSync(path.join(finalDir, "resolved-config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  writeFileSync(path.join(finalDir, "resolved-config.json"), `${JSON.stringify(activeConfig, null, 2)}\n`, "utf8");
 
   // Write final/patch.diff & final/metrics.json
   const patchEntries: Array<{ path: string; content: string }> = [];
@@ -677,6 +726,19 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   }
   writeFileSync(path.join(finalDir, "patch.diff"), buildUnifiedNewFilePatch(patchEntries), "utf8");
 
+  let llmRequests = 0;
+  for (const pPath of [
+    path.join(opts.workDir, ARTIFACTS.proposed.dir, "proposed.json"),
+    path.join(opts.workDir, ARTIFACTS.repaired.dir, "proposed.repaired.json"),
+  ]) {
+    const parsedProposed = tryReadJsonFile(pPath, (r) => ProposedSchema.parse(r));
+    if (parsedProposed) {
+      for (const f of parsedProposed.files) {
+        llmRequests += f.usage?.requests ?? 0;
+      }
+    }
+  }
+
   const metrics = createInitialMetrics({
     runId: updatedFinal.runId,
     repo: updatedFinal.repo,
@@ -686,6 +748,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     agentVersion: "2.0.0",
     toolVersions: updatedFinal.toolVersions,
   });
+  metrics.llm.requests = llmRequests;
   for (const fr of report.files) {
     if (fr.outcome === "accepted") metrics.files.accepted += 1;
     else if (fr.outcome === "accepted_pruned") metrics.files.acceptedPruned += 1;
@@ -709,6 +772,7 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     upstreamStatuses,
     approvalEnvironment: envName,
     approvalWarning,
+    llmRequests,
   });
 
   writeStepSummary(markdown);

@@ -13,6 +13,7 @@ export interface RunnerTestCase {
 export interface RunnerRequest {
   workspaceRoot: string;
   repoRoot: string;
+  workDir?: string;
   languageConfig: LanguageConfig;
   config: UnitAgentConfig;
   sourcePath: string;

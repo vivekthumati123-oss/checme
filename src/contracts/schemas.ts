@@ -21,6 +21,9 @@ export const SkipReasonSchema = z.enum([
   "parse_errors",
   "no_untested_symbols",
   "install_failed",
+  "toolchain_mismatch",
+  "unsupported_tool_version",
+  "wrapper_unavailable",
 ]);
 export type SkipReason = z.infer<typeof SkipReasonSchema>;
 

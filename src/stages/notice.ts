@@ -50,6 +50,7 @@ export interface NoticeBaselineSummary {
   exitCode?: number;
   command?: string;
   summary?: string;
+  mismatchReason?: string;
 }
 
 export interface RunNoticeOptions {
@@ -188,11 +189,26 @@ function readOptionalArtifacts(workDir: string): {
   let baseline: NoticeBaselineSummary | undefined;
   if (rawBaseline && typeof rawBaseline === "object") {
     const b = rawBaseline as Record<string, unknown>;
+    let mismatchReason: string | undefined;
+    let firstLangDetail: string | undefined;
+    if (b.perLanguage && typeof b.perLanguage === "object") {
+      for (const val of Object.values(b.perLanguage as Record<string, unknown>)) {
+        if (!val || typeof val !== "object") continue;
+        const entry = val as Record<string, unknown>;
+        if (!mismatchReason && typeof entry.mismatchReason === "string" && entry.mismatchReason) {
+          mismatchReason = entry.mismatchReason;
+        }
+        if (!firstLangDetail && entry.status === "red" && typeof entry.detail === "string" && entry.detail) {
+          firstLangDetail = entry.detail;
+        }
+      }
+    }
     baseline = {
       status: typeof b.status === "string" ? b.status : undefined,
       exitCode: typeof b.exitCode === "number" ? b.exitCode : undefined,
       command: typeof b.command === "string" ? b.command : undefined,
-      summary: typeof b.summary === "string" ? b.summary : undefined,
+      summary: typeof b.summary === "string" ? b.summary : firstLangDetail,
+      mismatchReason,
     };
   }
 
@@ -326,7 +342,7 @@ function resolveNoticeReason(params: {
     return firstPlanSkipped.reason;
   }
   if (params.baseline?.status === "red") {
-    return "baseline_red";
+    return params.baseline.mismatchReason ?? "baseline_red";
   }
   const firstManifestSkipped = params.manifest?.skipped[0];
   if (firstManifestSkipped) {

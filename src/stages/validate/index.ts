@@ -476,6 +476,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
       const runnerReq = {
         workspaceRoot: workspace.root,
         repoRoot: opts.repoRoot,
+        workDir: opts.workDir,
         languageConfig: langCfg,
         config,
         sourcePath: mf.path,

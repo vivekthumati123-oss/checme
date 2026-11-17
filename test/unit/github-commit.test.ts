@@ -501,4 +501,79 @@ describe("github integration & commit stage", () => {
       process.exitCode = prevExit;
     }
   });
+
+  it("renders toolVersions/request footer and handles notice-only publish when .unit-agent.yml is absent", async () => {
+    const dir = makeTempDir();
+    const workDir = path.join(dir, ".unit-agent");
+    mkdirSync(path.join(workDir, ARTIFACTS.prepare.dir), { recursive: true });
+    writeFileSync(
+      path.join(workDir, ARTIFACTS.prepare.dir, "notice.md"),
+      "<!-- unit-agent:summary v1 pr=22 -->\n### Unit Agent — Notice\n\nNo config present.\n",
+      "utf8",
+    );
+
+    const noticeRes = await runPublish({
+      repoRoot: dir,
+      workDir,
+      prNumber: 22,
+      repoFullName: "org/repo",
+      headSha: "head22",
+      dryRun: true,
+      writeOutputs: false,
+    });
+    expect(noticeRes.finalArtifact.mode).toBe("report");
+    expect(noticeRes.markdown).toContain("No config present.");
+
+    // Also verify A6 tooling footer renders when report + final exist
+    makeFinalFixture(workDir, VALID_TEST_CONTENT, "head-a6");
+    mkdirSync(path.join(workDir, ARTIFACTS.validate1.dir), { recursive: true });
+    writeFileSync(
+      path.join(workDir, ARTIFACTS.validate1.dir, "report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        attempt: 1,
+        workspace: "copy",
+        environment: null,
+        patchCoverage: { beforePct: 10, projectedPct: 90 },
+        toolVersions: {
+          agentNode: "v22.0.0",
+          languages: {
+            javascript: {
+              runtime: { version: "20", source: "config" },
+              framework: { name: "jest", version: "29.7.0", supported: true },
+              tier: "tested",
+            },
+          },
+          warnings: [],
+        },
+        notes: [],
+        files: [],
+      }),
+      "utf8",
+    );
+    const fake = makeFakeGitHub();
+    const pubRes = await runPublish({
+      repoRoot: dir,
+      workDir,
+      config: ConfigSchema.parse({
+        version: 1,
+        mode: "report",
+        languages: {
+          javascript: {
+            enabled: true,
+            testCommand: "npx jest",
+            coverageFile: "coverage/lcov.info",
+            coverageFormat: "lcov",
+            sourceGlobs: ["src/**/*.ts"],
+            testPathPatterns: ["test/{name}.test.{ext}"],
+          },
+        },
+      }),
+      github: fake.client,
+      dryRun: true,
+      writeOutputs: false,
+    });
+    expect(pubRes.markdown).toContain("_Tooling: Agent Node");
+    expect(pubRes.markdown).toContain("LLM requests: 0");
+  });
 });
