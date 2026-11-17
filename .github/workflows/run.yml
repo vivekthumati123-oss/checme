@@ -274,7 +274,7 @@ jobs:
 
   approve-and-commit:
     needs: publish
-    if: needs.publish.outputs.has_tests == 'true'
+    if: "!cancelled() && needs.publish.result == 'success' && needs.publish.outputs.has_tests == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: ${{ inputs.approval-environment }}

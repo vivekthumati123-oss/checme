@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { loadConfig } from "../config";
 import {
   ARTIFACTS,
   EXIT_CODES,
@@ -26,6 +25,7 @@ import {
   upsertUnitAgentComment,
   verifyRunApprovals,
 } from "../github";
+import { loadOptionalResolvedConfig } from "./detect";
 import { sanitizeForMarkdown, writeGitHubOutput, writeStageStatus, writeStepSummary } from "../telemetry";
 
 export interface RunCommitOptions {
@@ -100,12 +100,12 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
   }
 
   let config = opts.config;
-  if (!config && opts.repoRoot) {
-    try {
-      config = loadConfig(opts.repoRoot, opts.configPath).config;
-    } catch {
-      // Commit job runs without checkout in CI; config is optional when final.json provides outputs
-    }
+  if (!config) {
+    config = loadOptionalResolvedConfig({
+      repoRoot: opts.repoRoot ?? opts.workDir,
+      configPath: opts.configPath,
+      fallbackDirs: [finalDir, path.dirname(finalFile), path.join(opts.workDir, ARTIFACTS.prepare.dir)],
+    });
   }
 
   const [owner = "", repo = ""] = finalArtifact.repo.split("/");

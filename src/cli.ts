@@ -30,7 +30,7 @@ import {
 } from "./local";
 import { runBaseline } from "./stages/baseline";
 import { runCommit } from "./stages/commit";
-import { runDetect } from "./stages/detect";
+import { runDetect, loadOptionalResolvedConfig } from "./stages/detect";
 import { runGenerate } from "./stages/generate";
 import { runGuard, type PullRequestEventPayload } from "./stages/guard";
 import { runInstall } from "./stages/install";
@@ -625,8 +625,16 @@ export function buildProgram(track?: CliTrackContext): Command {
           "missing_expected_head",
         );
       }
-      const cfg = loadConfig(repoRoot, opts.config).config;
-      const clients = opts.offline || cmdOpts.dryRun ? {} : createGitHubClientsFromEnv(cfg.commit.auth);
+      const cfg = loadOptionalResolvedConfig({
+        repoRoot,
+        configPath: opts.config,
+        fallbackDirs: [
+          ...(cmdOpts.final ? [path.dirname(path.resolve(cmdOpts.final))] : []),
+          path.join(workDir, ARTIFACTS.final.dir),
+          path.join(workDir, ARTIFACTS.prepare.dir),
+        ],
+      });
+      const clients = opts.offline || cmdOpts.dryRun ? {} : createGitHubClientsFromEnv(cfg?.commit.auth);
       const approvalCheckRaw = process.env.UA_APPROVAL_CHECK;
       const approvalCheck = approvalCheckRaw === "manual" || approvalCheckRaw === "api" ? approvalCheckRaw : undefined;
       const runIdParsed = process.env.GITHUB_RUN_ID ? Number.parseInt(process.env.GITHUB_RUN_ID, 10) : undefined;

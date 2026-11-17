@@ -664,8 +664,11 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   mkdirSync(path.dirname(finalFile), { recursive: true });
   writeFileSync(finalFile, `${JSON.stringify(updatedFinal, null, 2)}\n`, "utf8");
 
-  // Write final/patch.diff & final/metrics.json
+  // Write final/resolved-config.json so checkout-less approve-and-commit can honor commit/policy config
   const finalDir = path.join(opts.workDir, ARTIFACTS.final.dir);
+  writeFileSync(path.join(finalDir, "resolved-config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  // Write final/patch.diff & final/metrics.json
   const patchEntries: Array<{ path: string; content: string }> = [];
   for (const f of updatedFinal.files) {
     const valFile = path.join(finalDir, "validated", f.path);

@@ -17,6 +17,7 @@ import { sha256Hex } from "../../src/core/context";
 import { parseEnvironmentProtectionRules, verifyRunApprovals } from "../../src/github";
 import { runCommit } from "../../src/stages/commit";
 import { runPublish } from "../../src/stages/publish";
+import { runCli } from "../../src/cli";
 
 const tempDirs: string[] = [];
 
@@ -448,5 +449,56 @@ describe("github integration & commit stage", () => {
       status: string;
     };
     expect(statusObj.status).toBe("soft_fail");
+  });
+
+  it("executes CLI commit without .unit-agent.yml on disk by reading final/resolved-config.json", async () => {
+    const dir = makeTempDir();
+    const workDir = path.join(dir, ".unit-agent");
+    makeFinalFixture(workDir, VALID_TEST_CONTENT, "head-no-checkout");
+    writeFileSync(
+      path.join(workDir, ARTIFACTS.final.dir, "resolved-config.json"),
+      JSON.stringify(
+        ConfigSchema.parse({
+          version: 1,
+          mode: "propose",
+          languages: {
+            javascript: {
+              enabled: true,
+              testCommand: "npx vitest run",
+              coverageFile: "coverage/lcov.info",
+              coverageFormat: "lcov",
+              sourceGlobs: ["src/**/*.ts"],
+              testPathPatterns: ["test/{name}.test.{ext}"],
+            },
+          },
+        }),
+      ),
+      "utf8",
+    );
+
+    const prevExit = process.exitCode;
+    try {
+      await runCli([
+        "node",
+        "cli.js",
+        "--repo-root",
+        dir,
+        "--work-dir",
+        workDir,
+        "commit",
+        "--expected-head",
+        "head-no-checkout",
+        "--dry-run",
+      ]);
+      expect(process.exitCode).toBe(EXIT_CODES.OK);
+      const statusObj = JSON.parse(readFileSync(path.join(workDir, "commit", "status.json"), "utf8")) as {
+        stage: string;
+        status: string;
+        reason: string;
+      };
+      expect(statusObj).toMatchObject({ stage: "commit", status: "ok", reason: "dry_run" });
+    } finally {
+      process.exitCode = prevExit;
+    }
   });
 });

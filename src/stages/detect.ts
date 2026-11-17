@@ -541,6 +541,31 @@ export function loadManifest(workDir: string, explicitPath?: string): Manifest {
 }
 
 /**
+ * Try loading `.unit-agent.yml` from `repoRoot`, or fall back to any persisted
+ * `resolved-config.json` in `fallbackDirs` (for checkout-less CI jobs).
+ */
+export function loadOptionalResolvedConfig(params: {
+  repoRoot: string;
+  configPath?: string;
+  fallbackDirs?: string[];
+}): UnitAgentConfig | undefined {
+  const explicitOrDefault = params.configPath ?? process.env.UA_CONFIG ?? ".unit-agent.yml";
+  const candidateAbs = path.isAbsolute(explicitOrDefault)
+    ? explicitOrDefault
+    : path.resolve(params.repoRoot, explicitOrDefault);
+  if (existsSync(candidateAbs)) {
+    return loadConfig(params.repoRoot, params.configPath).config;
+  }
+  for (const dir of params.fallbackDirs ?? []) {
+    const snapshotAbs = path.join(dir, "resolved-config.json");
+    if (existsSync(snapshotAbs)) {
+      return ConfigSchema.parse(JSON.parse(readFileSync(snapshotAbs, "utf8")));
+    }
+  }
+  return undefined;
+}
+
+/**
  * Load `.unit-agent.yml` when present in `repoRoot`, or fall back to
  * `prepare/resolved-config.json` in checkout-less CI jobs (`generate`/`repair`).
  */
@@ -550,17 +575,11 @@ export function loadPrepareConfig(params: {
   configPath?: string;
   prepareDir?: string;
 }): UnitAgentConfig {
-  const explicitOrDefault = params.configPath ?? process.env.UA_CONFIG ?? ".unit-agent.yml";
-  const candidateAbs = path.isAbsolute(explicitOrDefault)
-    ? explicitOrDefault
-    : path.resolve(params.repoRoot, explicitOrDefault);
-  if (existsSync(candidateAbs)) {
-    return loadConfig(params.repoRoot, params.configPath).config;
-  }
   const prepDir = params.prepareDir ?? path.join(params.workDir, ARTIFACTS.prepare.dir);
-  const snapshotAbs = path.join(prepDir, "resolved-config.json");
-  if (existsSync(snapshotAbs)) {
-    return ConfigSchema.parse(JSON.parse(readFileSync(snapshotAbs, "utf8")));
-  }
-  return loadConfig(params.repoRoot, params.configPath).config;
+  const found = loadOptionalResolvedConfig({
+    repoRoot: params.repoRoot,
+    configPath: params.configPath,
+    fallbackDirs: [prepDir],
+  });
+  return found ?? loadConfig(params.repoRoot, params.configPath).config;
 }
