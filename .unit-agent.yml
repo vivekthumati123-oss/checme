@@ -14,3 +14,5 @@ languages:
     coverageFormat: jacoco
     sourceGlobs: ["src/main/java/**/*.java"]
     testPathPatterns: ["src/test/java/{package}/{Name}Test.java"]
+    coverage:
+      mode: repo
