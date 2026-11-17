@@ -34,6 +34,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      guard_skip: ${{ steps.guard.outputs.skip }}
       has_work: ${{ steps.detect.outputs.has_work }}
       has_notice: ${{ steps.notice.outputs.has_notice }}
       languages: ${{ steps.plan.outputs.languages }}
@@ -53,46 +54,46 @@ jobs:
           command: guard
           github-token: "${{ github.token }}"
       - id: plan
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.guard.outputs.proceed == 'true'
         uses: ./.github/actions/cli
         with:
           command: plan
       - uses: actions/setup-node@v4
-        if: steps.guard.outputs.skip != 'true' && contains(steps.plan.outputs.languages, 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && contains(steps.plan.outputs.languages, 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
         with:
           node-version: ${{ fromJSON(steps.plan.outputs.toolchains).node.version }}
           node-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).node.file }}
       - uses: actions/setup-python@v5
-        if: steps.guard.outputs.skip != 'true' && contains(steps.plan.outputs.languages, 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && contains(steps.plan.outputs.languages, 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
         with:
           python-version: ${{ fromJSON(steps.plan.outputs.toolchains).python.version }}
           python-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).python.file }}
       - uses: actions/setup-java@v4
-        if: steps.guard.outputs.skip != 'true' && contains(steps.plan.outputs.languages, 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && contains(steps.plan.outputs.languages, 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
         with:
           distribution: ${{ fromJSON(steps.plan.outputs.toolchains).java.distribution }}
           java-version: ${{ fromJSON(steps.plan.outputs.toolchains).java.version }}
           java-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).java.file }}
-      - if: steps.guard.outputs.skip != 'true'
+      - if: steps.guard.outputs.proceed == 'true'
         uses: ./.github/actions/cli
         with:
           command: install
-      - if: steps.guard.outputs.skip != 'true'
+      - if: steps.guard.outputs.proceed == 'true'
         uses: ./.github/actions/cli
         with:
           command: baseline
       - id: detect
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.guard.outputs.proceed == 'true'
         uses: ./.github/actions/cli
         with:
           command: detect
       - id: notice
-        if: always() && steps.guard.outputs.skip != 'true'
+        if: always() && !cancelled()
         uses: ./.github/actions/cli
         with:
           command: notice
       - uses: actions/upload-artifact@v4
-        if: always() && steps.guard.outputs.skip != 'true'
+        if: always() && !cancelled() && steps.guard.outputs.proceed != 'false'
         with:
           name: ua-prepare
           path: .unit-agent/prepare
@@ -197,7 +198,7 @@ jobs:
 
   publish:
     needs: [prepare, generate, validate1, repair, validate2]
-    if: always() && (needs.prepare.outputs.has_work == 'true' || needs.prepare.outputs.has_notice == 'true')
+    if: always() && !cancelled() && needs.prepare.result != 'cancelled' && needs.prepare.outputs.guard_skip != 'true' && (needs.prepare.outputs.has_work == 'true' || needs.prepare.outputs.has_notice == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -214,36 +215,43 @@ jobs:
         with:
           node-version: "${{ inputs.agent-node-version }}"
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: ua-prepare
           path: .unit-agent/prepare
       - uses: actions/download-artifact@v4
-        if: needs.generate.result == 'success'
+        if: needs.generate.result == 'success' || needs.generate.result == 'failure'
+        continue-on-error: true
         with:
           name: ua-proposed
           path: .unit-agent/generate
       - uses: actions/download-artifact@v4
         if: needs.validate1.result == 'success'
+        continue-on-error: true
         with:
           name: ua-snapshot1
           path: .unit-agent/snapshot1
       - uses: actions/download-artifact@v4
-        if: needs.validate1.result == 'success'
+        if: needs.validate1.result == 'success' || needs.validate1.result == 'failure'
+        continue-on-error: true
         with:
           name: ua-validate1
           path: .unit-agent/validate1
       - uses: actions/download-artifact@v4
-        if: needs.repair.result == 'success'
+        if: needs.repair.result == 'success' || needs.repair.result == 'failure'
+        continue-on-error: true
         with:
           name: ua-repaired
           path: .unit-agent/repair
       - uses: actions/download-artifact@v4
         if: needs.validate2.result == 'success'
+        continue-on-error: true
         with:
           name: ua-snapshot2
           path: .unit-agent/snapshot2
       - uses: actions/download-artifact@v4
-        if: needs.validate2.result == 'success'
+        if: needs.validate2.result == 'success' || needs.validate2.result == 'failure'
+        continue-on-error: true
         with:
           name: ua-validate2
           path: .unit-agent/validate2
@@ -256,11 +264,13 @@ jobs:
           approval-environment: "${{ inputs.approval-environment }}"
           approval-check: "${{ inputs.approval-check }}"
       - uses: actions/upload-artifact@v4
+        if: always() && !cancelled()
         with:
           name: ua-final
           path: .unit-agent/final
           retention-days: 14
           overwrite: true
+          if-no-files-found: ignore
 
   approve-and-commit:
     needs: publish
