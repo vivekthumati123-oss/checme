@@ -80,9 +80,10 @@ runs:
         UA_APPROVAL_CHECK: ${{ inputs.approval-check }}
       run: |
         set -euo pipefail
-        ACTION_ROOT="$(cd "${{ github.action_path }}/../../.." && pwd)"
-        if { [ "$UA_COMMAND" = "generate" ] || [ "$UA_COMMAND" = "repair" ]; } && [ ! -d "$ACTION_ROOT/node_modules/@github/copilot-sdk" ] && ! printf ' %s ' "$UA_ARGS" | grep -qE ' (--dry-run|--fake-llm) '; then
-          npm install --prefix "$ACTION_ROOT" --no-save --no-package-lock --no-audit --no-fund @github/copilot-sdk@1.0.16 >/dev/null
+        DIST_DIR="$(cd "${{ github.action_path }}/../../../dist" && pwd)"
+        if { [ "$UA_COMMAND" = "generate" ] || [ "$UA_COMMAND" = "repair" ]; } && [ ! -d "$DIST_DIR/node_modules/@github/copilot-sdk" ] && ! printf ' %s ' "$UA_ARGS" | grep -qE ' (--dry-run|--fake-llm) '; then
+          if [ ! -f "$DIST_DIR/package.json" ]; then printf '{"private":true}\n' > "$DIST_DIR/package.json"; fi
+          npm install --prefix "$DIST_DIR" --no-save --no-package-lock --no-audit --no-fund @github/copilot-sdk@1.0.16 >/dev/null
         fi
         # shellcheck disable=SC2086
         "${UA_NODE:-node}" --throw-deprecation "${{ github.action_path }}/../../../dist/cli.js" "$UA_COMMAND" $UA_ARGS
