@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { loadConfig } from "../config";
 import {
   ARTIFACTS,
   EXIT_CODES,
@@ -20,7 +19,7 @@ import { sha256Hex } from "../core/context";
 import { formatGeneratedTestContent } from "../core/text/eol";
 import { CopilotSdkTestClient, FakeLlmClient, type LlmTestClient } from "../llm";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
-import { loadManifest } from "./detect";
+import { loadPrepareConfig, loadManifest } from "./detect";
 
 export interface RunGenerateOptions {
   repoRoot: string;
@@ -37,11 +36,18 @@ export interface RunGenerateOptions {
 }
 
 export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
-  const config = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
-  const manifest = opts.manifest ?? loadManifest(opts.workDir, opts.manifestPath);
   const prepareDir = opts.manifestPath
     ? path.dirname(path.resolve(opts.manifestPath))
     : path.join(opts.workDir, ARTIFACTS.prepare.dir);
+  const config =
+    opts.config ??
+    loadPrepareConfig({
+      repoRoot: opts.repoRoot,
+      workDir: opts.workDir,
+      configPath: opts.configPath,
+      prepareDir,
+    });
+  const manifest = opts.manifest ?? loadManifest(opts.workDir, opts.manifestPath);
 
   let client: LlmTestClient | null = null;
   if (!opts.dryRun) {

@@ -201,4 +201,19 @@ describe("generate stage & LLM isolation", () => {
     const status = JSON.parse(readFileSync(path.join(workDir, "generate", "status.json"), "utf8"));
     expect(status.reason).toBe("dry_run");
   });
+
+  it("loads resolved-config.json when running generate without .unit-agent.yml on disk (checkout-less CI)", async () => {
+    const dir = makeTempDir();
+    const { workDir, cfg } = setupManifestFixture(dir, 1);
+    writeFileSync(path.join(workDir, "prepare", "resolved-config.json"), `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+
+    const proposed = await runGenerate({
+      repoRoot: dir,
+      workDir,
+      dryRun: true,
+      writeOutputs: false,
+    });
+
+    expect(proposed.files).toEqual([]);
+  });
 });

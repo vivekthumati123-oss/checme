@@ -59,17 +59,17 @@ jobs:
         with:
           command: plan
       - uses: actions/setup-node@v4
-        if: steps.guard.outputs.proceed == 'true' && contains(steps.plan.outputs.languages, 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && contains(fromJSON(steps.plan.outputs.languages), 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
         with:
           node-version: ${{ fromJSON(steps.plan.outputs.toolchains).node.version }}
           node-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).node.file }}
       - uses: actions/setup-python@v5
-        if: steps.guard.outputs.proceed == 'true' && contains(steps.plan.outputs.languages, 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && contains(fromJSON(steps.plan.outputs.languages), 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
         with:
           python-version: ${{ fromJSON(steps.plan.outputs.toolchains).python.version }}
           python-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).python.file }}
       - uses: actions/setup-java@v4
-        if: steps.guard.outputs.proceed == 'true' && contains(steps.plan.outputs.languages, 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && contains(fromJSON(steps.plan.outputs.languages), 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
         with:
           distribution: ${{ fromJSON(steps.plan.outputs.toolchains).java.distribution }}
           java-version: ${{ fromJSON(steps.plan.outputs.toolchains).java.version }}

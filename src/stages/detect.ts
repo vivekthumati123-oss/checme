@@ -5,6 +5,7 @@ import picomatch from "picomatch";
 import { loadConfig, resolveTestPathForSource } from "../config";
 import {
   ARTIFACTS,
+  ConfigSchema,
   EXIT_CODES,
   FileContextSchema,
   ManifestSchema,
@@ -501,6 +502,11 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
   const manifestFile = path.join(opts.workDir, ARTIFACTS.prepare.dir, "manifest.json");
   mkdirSync(path.dirname(manifestFile), { recursive: true });
   writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  writeFileSync(
+    path.join(opts.workDir, ARTIFACTS.prepare.dir, "resolved-config.json"),
+    `${JSON.stringify(config, null, 2)}\n`,
+    "utf8",
+  );
 
   writeStageStatus(opts.workDir, {
     stage: "prepare",
@@ -532,4 +538,29 @@ export function loadManifest(workDir: string, explicitPath?: string): Manifest {
     );
   }
   return ManifestSchema.parse(JSON.parse(readFileSync(filePath, "utf8")));
+}
+
+/**
+ * Load `.unit-agent.yml` when present in `repoRoot`, or fall back to
+ * `prepare/resolved-config.json` in checkout-less CI jobs (`generate`/`repair`).
+ */
+export function loadPrepareConfig(params: {
+  repoRoot: string;
+  workDir: string;
+  configPath?: string;
+  prepareDir?: string;
+}): UnitAgentConfig {
+  const explicitOrDefault = params.configPath ?? process.env.UA_CONFIG ?? ".unit-agent.yml";
+  const candidateAbs = path.isAbsolute(explicitOrDefault)
+    ? explicitOrDefault
+    : path.resolve(params.repoRoot, explicitOrDefault);
+  if (existsSync(candidateAbs)) {
+    return loadConfig(params.repoRoot, params.configPath).config;
+  }
+  const prepDir = params.prepareDir ?? path.join(params.workDir, ARTIFACTS.prepare.dir);
+  const snapshotAbs = path.join(prepDir, "resolved-config.json");
+  if (existsSync(snapshotAbs)) {
+    return ConfigSchema.parse(JSON.parse(readFileSync(snapshotAbs, "utf8")));
+  }
+  return loadConfig(params.repoRoot, params.configPath).config;
 }
