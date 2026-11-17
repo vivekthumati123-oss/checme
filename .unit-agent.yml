@@ -1,0 +1,14 @@
+version: 1
+mode: report
+limits: { maxSymbolsPerPr: 10, maxFilesPerPr: 6, repairAttempts: 1 }
+targets: { patchCoverage: 80, symbolCoverageThreshold: 60 }
+languages:
+  javascript:
+    framework: jest
+    toolchain: "20"        # change to the Node major your team uses
+    installCommand: npm install --no-audit --no-fund
+    testCommand: npx jest --coverage --coverageReporters=lcov --coverageDirectory=coverage
+    coverageFile: coverage/lcov.info
+    coverageFormat: lcov
+    sourceGlobs: ["src/**/*.{ts,js}"]
+    testPathPatterns: ["{dir}/__tests__/{name}.test.{ext}"]
