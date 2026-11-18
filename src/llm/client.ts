@@ -10,6 +10,7 @@ import {
   type FileContext,
   type SubmitTestsArgs,
 } from "../contracts";
+import { isAuthErrorMessage } from "./auth-errors";
 import type { FailurePromptDetail } from "./renderer";
 import { buildSystemPrompt, renderGenerationPrompt, renderRepairPrompt } from "./renderer";
 
@@ -43,12 +44,7 @@ export interface CopilotSdkClientOptions {
   timeoutMs?: number;
 }
 
-export function isAuthErrorMessage(msg: string): boolean {
-  return (
-    /\b(401|403|unauthorized|bad credentials|authentication|authorization|token)\b/i.test(msg) ||
-    /\bcredentials\b.*\b(expired|invalid)\b/i.test(msg)
-  );
-}
+export { isAuthErrorMessage };
 
 export class CopilotSdkTestClient implements LlmTestClient {
   private readonly model?: string;

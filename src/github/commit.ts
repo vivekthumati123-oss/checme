@@ -36,18 +36,16 @@ export function buildUnifiedNewFilePatch(entries: Array<{ path: string; content:
 
 export function isBranchProtectionOrPermissionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-  const status =
-    err && typeof err === "object" && "status" in err && typeof (err as { status?: unknown }).status === "number"
-      ? (err as { status: number }).status
-      : 0;
-  if (status === 403 || status === 422) return true;
+  // Only genuine branch-protection / ruleset / integration-permission refusals fall back to a patch.
+  // Stale head, network, 422 validation, and rate limits must fail loudly.
+  if (/rate limit|abuse|expectedheadoid|expected head|not up to date|was provided invalid/.test(msg)) return false;
   return (
     msg.includes("protected branch") ||
     msg.includes("branch protection") ||
-    msg.includes("resource not accessible by integration") ||
+    msg.includes("repository rule violations") ||
     msg.includes("required status check") ||
-    msg.includes("permission") ||
-    msg.includes("not permitted") ||
-    msg.includes("forbidden")
+    msg.includes("resource not accessible by integration") ||
+    msg.includes("must be made through a pull request") ||
+    msg.includes("changes must be made through")
   );
 }

@@ -11,7 +11,9 @@ import {
   type LoggerLike,
   type UnitAgentConfig,
 } from "../contracts";
+import { hasProvenanceHeader } from "../config";
 import { sha256Hex } from "../core/context";
+import { checkCommitPath, safeHeredocDelimiter } from "../core/commit-paths";
 import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
 import { runStaticPolicyCheck } from "../core/policy";
 import {
@@ -80,6 +82,35 @@ async function postCommitFailureOrStatusComment(params: {
       // Never mask original exit reason if comment update fails
     }
   }
+}
+
+async function abortCommitPolicyOrHash(params: {
+  github?: GitHubClientLike;
+  dryRun?: boolean;
+  workDir: string;
+  owner: string;
+  repo: string;
+  pr: number;
+  headSha: string;
+  reason: string;
+  message: string;
+}): Promise<never> {
+  await postCommitFailureOrStatusComment({
+    github: params.github,
+    dryRun: params.dryRun,
+    owner: params.owner,
+    repo: params.repo,
+    pr: params.pr,
+    headSha: params.headSha,
+    message: params.message,
+  });
+  writeStageStatus(params.workDir, {
+    stage: "commit",
+    status: "error",
+    code: EXIT_CODES.POLICY_OR_HASH,
+    reason: params.reason,
+  });
+  throw new StageError(params.message, EXIT_CODES.POLICY_OR_HASH, "commit", params.reason);
 }
 
 export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult> {
@@ -170,47 +201,64 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       throw new StageError(msg, EXIT_CODES.POLICY_OR_HASH, "commit", "path_violation");
     }
 
-    const validatedFile = path.join(finalDir, "validated", normalizedPath);
-    if (!existsSync(validatedFile)) {
-      const msg = `Commit aborted: validated snapshot missing for \`${sanitizeForMarkdown(normalizedPath, 160)}\`.`;
-      await postCommitFailureOrStatusComment({
+    const pathVerdict = checkCommitPath(normalizedPath);
+    if (!pathVerdict.ok) {
+      await abortCommitPolicyOrHash({
         github: opts.github,
         dryRun: opts.dryRun,
+        workDir: opts.workDir,
         owner,
         repo,
         pr: finalArtifact.pr,
         headSha: finalArtifact.headSha,
-        message: msg,
+        reason: "path_violation",
+        message: `Commit aborted: test path \`${sanitizeForMarkdown(f.path, 160)}\` failed Gate 1 (${pathVerdict.reason}).`,
       });
-      writeStageStatus(opts.workDir, {
-        stage: "commit",
-        status: "error",
-        code: EXIT_CODES.POLICY_OR_HASH,
+    }
+
+    const validatedFile = path.join(finalDir, "validated", normalizedPath);
+    if (!existsSync(validatedFile)) {
+      await abortCommitPolicyOrHash({
+        github: opts.github,
+        dryRun: opts.dryRun,
+        workDir: opts.workDir,
+        owner,
+        repo,
+        pr: finalArtifact.pr,
+        headSha: finalArtifact.headSha,
         reason: "hash_mismatch",
+        message: `Commit aborted: validated snapshot missing for \`${sanitizeForMarkdown(normalizedPath, 160)}\`.`,
       });
-      throw new StageError(msg, EXIT_CODES.POLICY_OR_HASH, "commit", "hash_mismatch");
     }
 
     const rawContent = readFileSync(validatedFile, "utf8");
     const actualSha = sha256Hex(rawContent);
     if (actualSha !== f.sha256) {
-      const msg = `Commit aborted: SHA-256 mismatch for \`${sanitizeForMarkdown(normalizedPath, 160)}\`.`;
-      await postCommitFailureOrStatusComment({
+      await abortCommitPolicyOrHash({
         github: opts.github,
         dryRun: opts.dryRun,
+        workDir: opts.workDir,
         owner,
         repo,
         pr: finalArtifact.pr,
         headSha: finalArtifact.headSha,
-        message: msg,
-      });
-      writeStageStatus(opts.workDir, {
-        stage: "commit",
-        status: "error",
-        code: EXIT_CODES.POLICY_OR_HASH,
         reason: "hash_mismatch",
+        message: `Commit aborted: SHA-256 mismatch for \`${sanitizeForMarkdown(normalizedPath, 160)}\`.`,
       });
-      throw new StageError(msg, EXIT_CODES.POLICY_OR_HASH, "commit", "hash_mismatch");
+    }
+
+    if (config?.policy.provenanceHeader !== false && !hasProvenanceHeader(rawContent)) {
+      await abortCommitPolicyOrHash({
+        github: opts.github,
+        dryRun: opts.dryRun,
+        workDir: opts.workDir,
+        owner,
+        repo,
+        pr: finalArtifact.pr,
+        headSha: finalArtifact.headSha,
+        reason: "policy_violation",
+        message: `Commit aborted: \`${sanitizeForMarkdown(normalizedPath, 160)}\` lacks the unit-agent provenance header.`,
+      });
     }
 
     const lang = inferLanguageForTestPath(normalizedPath);
@@ -369,14 +417,15 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       ? readFileSync(patchPath, "utf8")
       : buildUnifiedNewFilePatch(additions.map((a) => ({ path: a.path, content: a.rawContent })));
 
+    const delim = safeHeredocDelimiter(patchDiff);
     const fallbackMsg = [
       `Could not push commit directly to \`${sanitizeForMarkdown(prInfo.headRef || finalArtifact.headRef, 120)}\` due to branch protection or permissions.`,
       "Apply the validated patch locally and push:",
       "",
       "```bash",
-      "git apply <<'EOF'",
+      `git apply <<'${delim}'`,
       patchDiff.trimEnd(),
-      "EOF",
+      delim,
       "```",
     ].join("\n");
 
