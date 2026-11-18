@@ -21,6 +21,9 @@ export const SkipReasonSchema = z.enum([
   "parse_errors",
   "no_untested_symbols",
   "install_failed",
+  "tool_missing",
+  "path_violation",
+  "test_path_collision",
   "toolchain_mismatch",
   "unsupported_tool_version",
   "wrapper_unavailable",
@@ -706,7 +709,7 @@ export interface GitHubClientLike {
     hasRequiredReviewers: boolean;
     preventSelfReview?: boolean;
   }>;
-  getRunApprovals(owner: string, repo: string, runId: number): Promise<string[]>;
+  getRunApprovals(owner: string, repo: string, runId: number, environmentName?: string): Promise<string[]>;
   createCommitOnBranch(params: {
     repositoryNameWithOwner: string;
     branchName: string;

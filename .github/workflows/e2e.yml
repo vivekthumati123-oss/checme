@@ -17,7 +17,6 @@ jobs:
       contents: read
     env:
       UA_RUN_LIVE_EVAL: ${{ inputs.live-sdk }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,5 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:unit-agent
-      - run: npx vitest run test/eval
+      - env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: npx vitest run test/eval
 

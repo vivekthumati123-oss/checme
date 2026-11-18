@@ -16,7 +16,7 @@ import {
 import { sha256Hex } from "../../src/core/context";
 import { parseEnvironmentProtectionRules, verifyRunApprovals } from "../../src/github";
 import { runCommit } from "../../src/stages/commit";
-import { runPublish } from "../../src/stages/publish";
+import { renderPublishSummaryMarkdown, runPublish } from "../../src/stages/publish";
 import { runCli } from "../../src/cli";
 
 const tempDirs: string[] = [];
@@ -575,5 +575,33 @@ describe("github integration & commit stage", () => {
     });
     expect(pubRes.markdown).toContain("_Tooling: Agent Node");
     expect(pubRes.markdown).toContain("LLM requests: 0");
+
+    const rendered = renderPublishSummaryMarkdown({
+      finalArtifact: { ...makeFinalFixture(makeTempDir()), mode: "propose" },
+      report: {
+        schemaVersion: 1,
+        attempt: 1,
+        workspace: "copy",
+        environment: null,
+        patchCoverage: { beforePct: 10, projectedPct: 90 },
+        toolVersions: { agentNode: "v22.0.0", languages: {}, warnings: [] },
+        notes: [],
+        files: [
+          {
+            fileId: "f1",
+            testPath: "test/math.test.ts",
+            outcome: "accepted",
+            gates: [{ gate: "path", status: "pass" }],
+            tests: [{ name: "adds", status: "pass" }],
+            reason: undefined,
+            sha256: "a".repeat(64),
+          },
+        ],
+      },
+      failedUpstreamJobs: ["build-$&-step"],
+      approvalEnvironment: "unit-agent-approval",
+    });
+    expect(rendered).toContain("build-$&-step");
+    expect(rendered).toContain("`unit-agent-approval`");
   });
 });

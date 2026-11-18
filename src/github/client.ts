@@ -11,6 +11,7 @@ export interface OctokitClientOptions {
 interface ApprovalEnvironmentEntry {
   state?: string;
   user?: { login?: string | null } | null;
+  environments?: Array<{ name?: string | null }> | null;
 }
 
 /**
@@ -100,7 +101,7 @@ export class OctokitGitHubClient implements GitHubClientLike {
     return {
       headSha: data.head.sha,
       headRef: data.head.ref,
-      headRepoFullName: data.head.repo?.full_name ?? `${owner}/${repo}`,
+      headRepoFullName: data.head.repo?.full_name ?? "",
       baseRepoFullName: data.base.repo.full_name,
       draft: Boolean(data.draft),
       authorLogin: data.user?.login ?? "",
@@ -178,24 +179,27 @@ export class OctokitGitHubClient implements GitHubClientLike {
         return { exists: false, status: 404, hasRequiredReviewers: false, preventSelfReview: true };
       }
       if (status === 403 || status === 401) {
-        return { exists: false, status: 403, hasRequiredReviewers: false, preventSelfReview: true };
+        return { exists: false, status, hasRequiredReviewers: false, preventSelfReview: true };
       }
       throw err;
     }
   }
 
-  async getRunApprovals(owner: string, repo: string, runId: number): Promise<string[]> {
-    const res = await this.octokit.request("GET /repos/{owner}/{repo}/actions/runs/{run_id}/approvals", {
+  async getRunApprovals(owner: string, repo: string, runId: number, environmentName?: string): Promise<string[]> {
+    const entries = (await this.octokit.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/approvals", {
       owner,
       repo,
       run_id: runId,
-    });
-    const entries = Array.isArray(res.data) ? (res.data as ApprovalEnvironmentEntry[]) : [];
+      per_page: 100,
+    })) as ApprovalEnvironmentEntry[];
     const logins = new Set<string>();
     for (const entry of entries) {
-      if (entry.state === "approved" && entry.user?.login) {
-        logins.add(entry.user.login);
+      if (entry.state !== "approved" || !entry.user?.login) continue;
+      if (environmentName && Array.isArray(entry.environments) && entry.environments.length > 0) {
+        const matchesEnv = entry.environments.some((envObj) => envObj?.name === environmentName);
+        if (!matchesEnv) continue;
       }
+      logins.add(entry.user.login);
     }
     return [...logins];
   }

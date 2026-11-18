@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config";
 import type { LanguageKey, LocalDoctorSummary, UnitAgentConfig } from "../contracts";
 import { sha256Hex } from "../core/context";
+import { isSafeRealPathInsideRoot } from "../core/paths";
 import { extractTestRulesBlock, loadPromptTemplate } from "../llm";
 import { runLocalDoctor, UNIT_AGENT_CLI_VERSION } from "./doctor";
 
@@ -97,6 +98,7 @@ function stripJsonc(raw: string): string {
 
 function stampContentHash(contentWithPlaceholder: string): string {
   const normalized = contentWithPlaceholder
+    .replace(/\r\n/g, "\n")
     .replaceAll("{{version}}", UNIT_AGENT_CLI_VERSION)
     .replaceAll("{{hash}}", "__HASH_PLACEHOLDER__");
   const shortHash = sha256Hex(normalized).slice(0, 12);
@@ -108,23 +110,28 @@ function isUnmodifiedGeneratedFile(existingContent: string): boolean {
   const m = markerRe.exec(existingContent);
   if (!m?.[2]) return false;
   const recordedHash = m[2];
-  const normalized = existingContent.replace(`hash=${recordedHash}`, "hash=__HASH_PLACEHOLDER__");
+  const normalized = existingContent
+    .replace(/\r\n/g, "\n")
+    .replace(`hash=${recordedHash}`, "hash=__HASH_PLACEHOLDER__");
   return sha256Hex(normalized).slice(0, 12) === recordedHash;
 }
 
 function renderTemplateText(raw: string, vars: Record<string, string>): string {
-  let out = raw;
-  for (const [k, v] of Object.entries(vars)) {
-    out = out.replaceAll(`{{${k}}}`, v);
-  }
-  return out;
+  return raw.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, key: string) =>
+    Object.prototype.hasOwnProperty.call(vars, key) ? vars[key]! : match,
+  );
 }
 
 export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChatResult> {
   const config = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
   const tmplDir = resolveChatTemplatesDir();
 
-  const cliCmd = `${config.local.nodeCommand} .unit-agent/bin/cli.js`;
+  const rawNodeCmd = config.local.nodeCommand.trim();
+  const shellNodeCmd =
+    /\s/.test(rawNodeCmd) && !(rawNodeCmd.startsWith('"') && rawNodeCmd.endsWith('"'))
+      ? `"${rawNodeCmd.replace(/"/g, '\\"')}"`
+      : rawNodeCmd;
+  const cliCmd = `${shellNodeCmd} .unit-agent/bin/cli.js`;
   const enabledLangs = (["javascript", "python", "java"] as LanguageKey[]).filter((l) => config.languages[l]?.enabled);
   const testRules = extractTestRulesBlock().replaceAll(
     "{{maxTestsPerSymbol}}",
@@ -134,7 +141,7 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
 
   const vars: Record<string, string> = {
     cli: cliCmd,
-    nodeCommand: config.local.nodeCommand,
+    nodeCommand: shellNodeCmd,
     stagingDir: config.local.stagingDir.replace(/\\/g, "/"),
     toolsYamlList: JSON.stringify(config.local.chatTools),
     confirmBeforeRunRule: config.local.confirmBeforeRun
@@ -156,6 +163,10 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
 
   const fileResults: InitChatFileResult[] = [];
   for (const item of targetTemplates) {
+    if (!isSafeRealPathInsideRoot(item.destRel, opts.repoRoot, { allowMissingLeaf: true })) {
+      fileResults.push({ path: item.destRel, action: "skipped_modified" });
+      continue;
+    }
     const raw = readFileSync(path.join(tmplDir, item.src), "utf8");
     const preHash = renderTemplateText(raw, vars);
     const rendered = stampContentHash(preHash);
@@ -188,7 +199,12 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
   // VS Code tasks merge (tolerant JSONC)
   let tasksSampleWritten = false;
   if (opts.withTasks !== false) {
-    const rawTasks = renderTemplateText(readFileSync(path.join(tmplDir, "vscode-tasks.json"), "utf8"), vars);
+    const jsonTaskVars: Record<string, string> = {
+      nodeCommand: JSON.stringify(shellNodeCmd).slice(1, -1),
+      cli: JSON.stringify(cliCmd).slice(1, -1),
+      stagingDir: JSON.stringify(vars.stagingDir).slice(1, -1),
+    };
+    const rawTasks = renderTemplateText(readFileSync(path.join(tmplDir, "vscode-tasks.json"), "utf8"), jsonTaskVars);
     const uaTasksDoc = JSON.parse(rawTasks) as {
       version: string;
       tasks: Array<{ label: string; [k: string]: unknown }>;
@@ -267,7 +283,7 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
     if (srcCli) {
       cpSync(srcCli, path.join(binDir, "cli.js"), { force: true });
       const distRoot = path.dirname(srcCli);
-      for (const extra of ["wasm", "prompts", "templates", "unit-agent-jacoco.init.gradle"]) {
+      for (const extra of ["wasm", "prompts", "templates", "scripts", "unit-agent-jacoco.init.gradle"]) {
         const extraSrc = path.join(distRoot, extra);
         if (existsSync(extraSrc)) {
           cpSync(extraSrc, path.join(binDir, extra), { recursive: true, force: true });

@@ -27,8 +27,7 @@ function matchesFailingName(candidateName: string, failingSet: ReadonlySet<strin
       baseFail.endsWith(`> ${candidateName}`) ||
       baseFail.endsWith(`::${candidateName}`) ||
       baseFail.endsWith(`#${candidateName}`) ||
-      baseFail.endsWith(`.${candidateName}`) ||
-      baseFail.endsWith(` ${candidateName}`)
+      baseFail.endsWith(`.${candidateName}`)
     ) {
       return true;
     }
@@ -65,8 +64,13 @@ function findJsPruneTargets(
   let totalTests = 0;
 
   for (const call of root.descendantsOfType("call_expression")) {
-    const fnText = call.childForFieldName("function")?.text ?? "";
-    if (fnText !== "it" && fnText !== "test") continue;
+    const fn = call.childForFieldName("function");
+    const fnText = fn?.text ?? "";
+    const isDirectTest = /^(?:it|test)(?:\.concurrent)?$/.test(fnText);
+    const isEachTest =
+      fn?.type === "call_expression" &&
+      /^(?:it|test)(?:\.concurrent)?\.each$/.test(fn.childForFieldName("function")?.text ?? "");
+    if (!isDirectTest && !isEachTest) continue;
 
     const stmt = call.parent;
     if (!stmt || stmt.type !== "expression_statement") continue;
@@ -92,6 +96,7 @@ function findPythonPruneTargets(
   failingSet: ReadonlySet<string>,
 ): { removals: ByteRemoval[]; totalTests: number } {
   const removals: ByteRemoval[] = [];
+  const removedFnIds = new Set<number>();
   let totalTests = 0;
 
   for (const fn of root.descendantsOfType("function_definition")) {
@@ -101,10 +106,36 @@ function findPythonPruneTargets(
     totalTests += 1;
     if (matchesFailingName(name, failingSet)) {
       const targetNode = fn.parent?.type === "decorated_definition" ? fn.parent : fn;
+      removedFnIds.add(targetNode.id);
       removals.push({
         start: targetNode.startIndex,
         end: targetNode.endIndex,
         name,
+      });
+    }
+  }
+
+  // If all statements inside a test class body were pruned, remove the empty class to preserve valid Python syntax.
+  for (const cls of root.descendantsOfType("class_definition")) {
+    const body = cls.childForFieldName("body");
+    if (!body) continue;
+    let remainingStmts = 0;
+    let hadRemoved = false;
+    for (let i = 0; i < body.namedChildCount; i += 1) {
+      const child = body.namedChild(i);
+      if (!child || child.type === "comment") continue;
+      if (removedFnIds.has(child.id)) {
+        hadRemoved = true;
+      } else {
+        remainingStmts += 1;
+      }
+    }
+    if (hadRemoved && remainingStmts === 0) {
+      const clsTarget = cls.parent?.type === "decorated_definition" ? cls.parent : cls;
+      removals.push({
+        start: clsTarget.startIndex,
+        end: clsTarget.endIndex,
+        name: cls.childForFieldName("name")?.text ?? "class",
       });
     }
   }
@@ -121,7 +152,13 @@ function findJavaPruneTargets(
 
   for (const method of root.descendantsOfType("method_declaration")) {
     const mods = method.children.find((c) => c.type === "modifiers")?.text ?? "";
-    if (!/@(?:org\.junit\.jupiter\.api\.)?Test\b/.test(mods)) continue;
+    if (
+      !/@(?:org\.junit\.jupiter\.api\.)?(?:Test|RepeatedTest|TestFactory|TestTemplate)\b|@(?:org\.junit\.jupiter\.params\.)?ParameterizedTest\b/.test(
+        mods,
+      )
+    ) {
+      continue;
+    }
 
     const name = method.childForFieldName("name")?.text ?? "";
     totalTests += 1;
@@ -135,6 +172,22 @@ function findJavaPruneTargets(
   }
 
   return { removals, totalTests };
+}
+
+function mergeDisjointRemovals(removals: readonly ByteRemoval[]): ByteRemoval[] {
+  if (removals.length === 0) return [];
+  const sorted = [...removals].sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: ByteRemoval[] = [];
+  for (const cur of sorted) {
+    const prev = merged[merged.length - 1];
+    if (!prev || cur.start > prev.end) {
+      merged.push({ ...cur });
+    } else if (cur.end > prev.end) {
+      prev.end = cur.end;
+      prev.name = prev.name || cur.name;
+    }
+  }
+  return merged;
 }
 
 export async function pruneFailingTests(params: {
@@ -151,36 +204,32 @@ export async function pruneFailingTests(params: {
 
   const parser = await createTreeSitterParser(grammar, params.wasmDir);
   const tree = parser.parse(params.content);
-
   let found: { removals: ByteRemoval[]; totalTests: number };
-  if (params.language === "javascript") {
-    found = findJsPruneTargets(tree.rootNode, failingSet);
-  } else if (params.language === "python") {
-    found = findPythonPruneTargets(tree.rootNode, failingSet);
-  } else {
-    found = findJavaPruneTargets(tree.rootNode, failingSet);
-  }
-
-  tree.delete();
-  parser.delete();
-
-  // Deduplicate overlapping byte ranges
-  const uniqueRemovals: ByteRemoval[] = [];
-  for (const r of found.removals) {
-    if (!uniqueRemovals.some((u) => u.start === r.start && u.end === r.end)) {
-      uniqueRemovals.push(r);
+  try {
+    if (params.language === "javascript") {
+      found = findJsPruneTargets(tree.rootNode, failingSet);
+    } else if (params.language === "python") {
+      found = findPythonPruneTargets(tree.rootNode, failingSet);
+    } else {
+      found = findJavaPruneTargets(tree.rootNode, failingSet);
     }
+  } finally {
+    tree.delete();
+    parser.delete();
   }
 
-  const prunedContent = applyRemovals(params.content, uniqueRemovals);
-  const droppedCount = uniqueRemovals.length;
+  const droppedNames = found.removals.map((r) => r.name);
+  const disjointRemovals = mergeDisjointRemovals(found.removals);
+
+  const prunedContent = applyRemovals(params.content, disjointRemovals);
+  const droppedCount = found.removals.length;
   const keptCount = Math.max(0, found.totalTests - droppedCount);
 
   return {
     prunedContent,
     keptCount,
     droppedCount,
-    prunedNames: uniqueRemovals.map((r) => r.name),
+    prunedNames: droppedNames,
     empty: keptCount === 0,
   };
 }

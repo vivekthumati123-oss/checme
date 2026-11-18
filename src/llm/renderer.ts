@@ -41,15 +41,29 @@ export function extractTestRulesBlock(systemPrompt?: string): string {
   return content.slice(startIdx + startMarker.length, endIdx).trim();
 }
 
-export function buildSystemPrompt(language: LanguageKey): string {
-  const base = loadPromptTemplate("system.md").trim();
+export function buildSystemPrompt(language: LanguageKey, maxTestsPerSymbol?: number): string {
+  const base = loadPromptTemplate("system.md")
+    .trim()
+    .replaceAll(
+      "{{maxTestsPerSymbol}}",
+      maxTestsPerSymbol !== undefined ? String(maxTestsPerSymbol) : "the configured maxTestsPerSymbol",
+    );
   const addendum = loadPromptTemplate(`${language}.md`).trim();
   return `${base}\n\n${addendum}\n`;
 }
 
+function sanitizeInlinePromptText(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/`/g, "'")
+    .replace(/<\s*\/?\s*UNTRUSTED_CODE\b[^>]*>/gi, "[redacted-tag]")
+    .trim();
+}
+
 export function wrapUntrustedCode(label: string, content: string): string {
-  const sanitized = content.replace(/<\/?UNTRUSTED_CODE>/gi, "[redacted-tag]");
-  return `<UNTRUSTED_CODE label="${label}">\n${sanitized}\n</UNTRUSTED_CODE>`;
+  const safeLabel = sanitizeInlinePromptText(label).replace(/"/g, "&quot;");
+  const sanitized = content.replace(/<\s*\/?\s*UNTRUSTED_CODE\b[^>]*>/gi, "[redacted-tag]");
+  return `<UNTRUSTED_CODE label="${safeLabel}">\n${sanitized}\n</UNTRUSTED_CODE>`;
 }
 
 export function renderGenerationPrompt(params: {
@@ -59,24 +73,30 @@ export function renderGenerationPrompt(params: {
 }): string {
   const { context } = params;
   const targetLines = context.targets.map(
-    (t) => `- symbolId: \`${t.symbolId}\` | ${t.qualifiedName} (lines ${t.startLine}-${t.endLine}): \`${t.signature}\``,
+    (t) =>
+      `- symbolId: \`${sanitizeInlinePromptText(t.symbolId)}\` | ${sanitizeInlinePromptText(t.qualifiedName)} (lines ${t.startLine}-${t.endLine}): \`${sanitizeInlinePromptText(t.signature)}\``,
   );
 
+  const sourcePathSafe = sanitizeInlinePromptText(context.sourceFile.path);
+  const testPathSafe = sanitizeInlinePromptText(context.conventions.testPath);
+  const importHintSafe = sanitizeInlinePromptText(context.conventions.importHint);
+  const fwVerSafe = context.frameworkVersion ? sanitizeInlinePromptText(context.frameworkVersion) : null;
+
   const sections = [
-    `Generate unit tests for \`${context.sourceFile.path}\`.`,
+    `Generate unit tests for \`${sourcePathSafe}\`.`,
     "",
     "### Conventions & Placement",
-    `- testPath: \`${context.conventions.testPath}\``,
-    `- framework: \`${context.framework}\`${context.frameworkVersion ? ` (${context.frameworkVersion})` : ""}`,
-    `- importHint: \`${context.conventions.importHint}\``,
-    `- mockingLibs: ${context.mockingLibs.length > 0 ? context.mockingLibs.join(", ") : "none (prefer pure inputs/constructors)"}`,
-    `- testNaming: ${context.conventions.testNaming}`,
-    `- assertionStyle: ${context.conventions.assertionStyle}`,
+    `- testPath: \`${testPathSafe}\``,
+    `- framework: \`${context.framework}\`${fwVerSafe ? ` (${fwVerSafe})` : ""}`,
+    `- importHint: \`${importHintSafe}\``,
+    `- mockingLibs: ${context.mockingLibs.length > 0 ? context.mockingLibs.map(sanitizeInlinePromptText).join(", ") : "none (prefer pure inputs/constructors)"}`,
+    `- testNaming: ${sanitizeInlinePromptText(context.conventions.testNaming)}`,
+    `- assertionStyle: ${sanitizeInlinePromptText(context.conventions.assertionStyle)}`,
     `- maxTestsPerSymbol: ${params.maxTestsPerSymbol}`,
   ];
 
   if (params.javaTestClassName) {
-    sections.push(`- required Java public test class name: \`${params.javaTestClassName}\``);
+    sections.push(`- required Java public test class name: \`${sanitizeInlinePromptText(params.javaTestClassName)}\``);
   }
 
   sections.push("", "### Target Symbols", ...targetLines);
@@ -96,14 +116,14 @@ export function renderGenerationPrompt(params: {
   if (context.styleSample) {
     sections.push(
       "",
-      `### Repository Test Style Sample (${context.styleSample.path})`,
+      `### Repository Test Style Sample (${sanitizeInlinePromptText(context.styleSample.path)})`,
       wrapUntrustedCode(context.styleSample.path, context.styleSample.content),
     );
   }
 
   sections.push(
     "",
-    `### Source Code (${context.sourceFile.path}${context.sourceFile.truncated ? " [sliced]" : ""})`,
+    `### Source Code (${sourcePathSafe}${context.sourceFile.truncated ? " [sliced]" : ""})`,
     wrapUntrustedCode(context.sourceFile.path, context.sourceFile.content),
     "",
     "Call `submit_tests` now with valid code adhering to all Test Generation Rules.",
@@ -121,10 +141,12 @@ export function renderRepairPrompt(params: {
   const sections = [
     repairHeader,
     "",
-    `- testPath: \`${params.context.conventions.testPath}\``,
-    `- importHint: \`${params.context.conventions.importHint}\``,
-    `- failureReason: \`${params.failure.reason}\``,
-    `- message: ${params.failure.message}`,
+    `- testPath: \`${sanitizeInlinePromptText(params.context.conventions.testPath)}\``,
+    `- importHint: \`${sanitizeInlinePromptText(params.context.conventions.importHint)}\``,
+    `- failureReason: \`${sanitizeInlinePromptText(params.failure.reason)}\``,
+    "",
+    "### Failure Message",
+    wrapUntrustedCode("failure-message", params.failure.message),
     "",
     "### Error Excerpt",
     wrapUntrustedCode("validation-error", params.failure.excerpt),
@@ -132,7 +154,7 @@ export function renderRepairPrompt(params: {
     "### Current Test File",
     wrapUntrustedCode(params.context.conventions.testPath, params.currentTestContent),
     "",
-    `### Target Source (${params.context.sourceFile.path})`,
+    `### Target Source (${sanitizeInlinePromptText(params.context.sourceFile.path)})`,
     wrapUntrustedCode(params.context.sourceFile.path, params.context.sourceFile.content),
   ];
 

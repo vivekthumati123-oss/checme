@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { ZodError } from "zod";
@@ -81,6 +81,19 @@ export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfi
       `Configuration file not found at ${configPath.replace(/\\/g, "/")}. See docs/config-reference.md to create .unit-agent.yml.`,
       "config_missing",
     );
+  }
+  const st = lstatSync(configPath);
+  if (st.isSymbolicLink() || !st.isFile()) {
+    throw new ConfigError(
+      `Configuration path ${configPath.replace(/\\/g, "/")} must be a regular file, not a symlink or directory.`,
+    );
+  }
+  if (!explicitPath && !process.env.UA_CONFIG) {
+    const realRoot = realpathSync(repoRoot);
+    const realCfg = realpathSync(configPath);
+    if (!realCfg.startsWith(realRoot)) {
+      throw new ConfigError(`Configuration file resolves outside repository root.`);
+    }
   }
   const rawYaml = readFileSync(configPath, "utf8");
   const { config, warnings } = parseConfigYaml(rawYaml, configPath);

@@ -118,7 +118,7 @@ export function recordWrapperUnavailableInPlan(workDir: string, host: string | u
 
 export async function runJavaCommandWithWrapperHandling(params: {
   repoRoot: string;
-  workDir: string;
+  workDir?: string;
   config: UnitAgentConfig;
   javaConfig: JavaConfig;
   cwd: string;
@@ -126,6 +126,9 @@ export async function runJavaCommandWithWrapperHandling(params: {
   args: readonly string[];
   timeoutMs: number;
   killChildrenOnExit?: boolean;
+  extraEnv?: Record<string, string | undefined>;
+  useOfflineWrapper?: boolean;
+  offlineScriptPath?: string;
   logger?: LoggerLike;
 }): Promise<{
   execRes: ExecResult;
@@ -141,6 +144,9 @@ export async function runJavaCommandWithWrapperHandling(params: {
     cwd: params.cwd,
     timeoutMs: params.timeoutMs,
     config: params.config,
+    extraEnv: params.extraEnv,
+    useOfflineWrapper: params.useOfflineWrapper,
+    offlineScriptPath: params.offlineScriptPath,
     killChildrenOnExit: params.killChildrenOnExit,
   });
 
@@ -163,22 +169,31 @@ export async function runJavaCommandWithWrapperHandling(params: {
       cwd: params.cwd,
       timeoutMs: params.timeoutMs,
       config: params.config,
+      extraEnv: params.extraEnv,
+      useOfflineWrapper: params.useOfflineWrapper,
+      offlineScriptPath: params.offlineScriptPath,
       killChildrenOnExit: params.killChildrenOnExit,
     });
     if (retry.exitCode === 0) {
       const warning = `Java wrapper download failed for ${hostLabel}; fell back to system "${systemCmd}". Set strictWrapper: true to disallow fallback or fix wrapper URL.`;
-      recordJavaWrapperFallback(params.workDir, inferredTool, systemCmd, warning);
+      if (params.workDir) {
+        recordJavaWrapperFallback(params.workDir, inferredTool, systemCmd, warning);
+      }
       params.logger?.warn({ buildTool: inferredTool, host: wrapperFail.host, fallback: systemCmd }, warning);
       return { execRes: retry };
     }
     const retryErr = retry.spawnError ? ` System "${systemCmd}" fallback also unavailable (${retry.spawnError}).` : "";
     const detail = `Java wrapper download failed for ${hostLabel}.${retryErr} ${remedies}`.trim();
-    recordWrapperUnavailableInPlan(params.workDir, wrapperFail.host, detail);
+    if (params.workDir) {
+      recordWrapperUnavailableInPlan(params.workDir, wrapperFail.host, detail);
+    }
     return { execRes: retry, wrapperUnavailable: { host: wrapperFail.host, detail } };
   }
 
   const detail = `Java wrapper unavailable (failed downloading from ${hostLabel}). ${remedies}`;
-  recordWrapperUnavailableInPlan(params.workDir, wrapperFail.host, detail);
+  if (params.workDir) {
+    recordWrapperUnavailableInPlan(params.workDir, wrapperFail.host, detail);
+  }
   return { execRes: first, wrapperUnavailable: { host: wrapperFail.host, detail } };
 }
 
@@ -192,11 +207,18 @@ export interface JavaProjectResolution {
   wrapperMissingError?: string;
 }
 
+function isSameOrInsideDir(curAbs: string, stopAbs: string): boolean {
+  const normCur = process.platform === "win32" ? path.resolve(curAbs).toLowerCase() : path.resolve(curAbs);
+  const normStop = process.platform === "win32" ? path.resolve(stopAbs).toLowerCase() : path.resolve(stopAbs);
+  const rel = path.relative(normStop, normCur);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
 function findNearestModuleDir(startFileAbs: string, stopRootAbs: string): string {
   let cur = path.dirname(startFileAbs);
   const stopNorm = path.resolve(stopRootAbs);
 
-  while (cur.startsWith(stopNorm)) {
+  while (isSameOrInsideDir(cur, stopNorm)) {
     if (
       existsSync(path.join(cur, "pom.xml")) ||
       existsSync(path.join(cur, "build.gradle")) ||

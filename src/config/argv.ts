@@ -20,6 +20,9 @@ export class ArgvParseError extends Error {
  * Windows paths survive without doubling backslashes.
  */
 export function parseArgvTokens(command: string): string[] {
+  if (/[\r\n\0]/.test(command)) {
+    throw new ArgvParseError("command must not contain newlines or NUL bytes");
+  }
   const trimmed = command.trim();
   if (trimmed.length === 0) {
     throw new ArgvParseError("command must not be empty");
@@ -97,7 +100,7 @@ export function parseArgvTokens(command: string): string[] {
   if (inToken) {
     tokens.push(current);
   }
-  if (tokens.length === 0) {
+  if (tokens.length === 0 || !tokens[0]) {
     throw new ArgvParseError("command must contain an executable");
   }
   if (ENV_PREFIX_RE.test(tokens[0]!)) {
@@ -131,7 +134,7 @@ export function tokenizeCommand(command: string, files?: readonly string[]): { f
         throw new ArgvParseError("command requires {files} arguments, none were provided");
       }
       for (const f of files) {
-        if (!SAFE_MODEL_PATH_RE.test(f) || f.includes("..") || path.isAbsolute(f)) {
+        if (!SAFE_MODEL_PATH_RE.test(f) || f.startsWith("-") || f.includes("..") || path.isAbsolute(f)) {
           throw new ArgvParseError(`unsafe file argument rejected for command expansion: "${f}"`);
         }
         expanded.push(f);

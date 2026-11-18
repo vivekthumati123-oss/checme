@@ -19,7 +19,7 @@ export const JAVA_TOOLCHAIN_MISMATCH_PATTERNS: readonly RegExp[] = [
 
 export function extractJavaMajor(raw: string | null | undefined): number | null {
   if (!raw) return null;
-  const cleaned = raw.trim();
+  const cleaned = raw.trim().replace(/^(?:[a-z]+(?:32|64)?[-_\s]+)+/i, "");
   const oneEight = /^1\.(\d+)/.exec(cleaned);
   if (oneEight?.[1]) {
     return Number.parseInt(oneEight[1], 10);

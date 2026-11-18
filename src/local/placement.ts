@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { cleanRepoRelative, normalizeSlashes, toRepoPath } from "../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../core/paths";
 
 export interface PlacedEntry {
   path: string;
@@ -55,6 +55,9 @@ export function cleanupLeftoverPlacedFiles(workDir: string, repoRoot: string): s
     for (const entry of entries) {
       try {
         const safeRel = toRepoPath(entry.path, repoRoot);
+        if (!isSafeRealPathInsideRoot(safeRel, repoRoot, { allowMissingLeaf: true })) {
+          continue;
+        }
         const abs = path.join(repoRoot, safeRel);
         if (existsSync(abs)) {
           rmSync(abs, { force: true });

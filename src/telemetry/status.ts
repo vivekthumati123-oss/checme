@@ -1,18 +1,28 @@
+import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { ARTIFACTS, EXIT_CODES, StageError, type ExitCode, type StageName, type StageStatus } from "../contracts";
 import { sanitizeOutput } from "./sanitize";
 
+const GITHUB_OUTPUT_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
 export function writeGitHubOutput(outputs: Record<string, string | boolean | number>): void {
   const outPath = process.env.GITHUB_OUTPUT;
   if (!outPath) return;
   const lines: string[] = [];
   for (const [key, raw] of Object.entries(outputs)) {
+    if (!GITHUB_OUTPUT_KEY_RE.test(key)) {
+      throw new Error(`Invalid GITHUB_OUTPUT key: "${key}"`);
+    }
     const val = String(raw);
-    if (val.includes("\n")) {
-      const delimiter = `UA_EOF_${Date.now()}`;
-      lines.push(`${key}<<${delimiter}\n${val}\n${delimiter}`);
+    if (/[\r\n]/.test(val)) {
+      let delimiter = `UA_EOF_${randomBytes(12).toString("hex")}`;
+      while (val.includes(delimiter)) {
+        delimiter = `UA_EOF_${randomBytes(12).toString("hex")}`;
+      }
+      const cleanVal = val.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      lines.push(`${key}<<${delimiter}\n${cleanVal}\n${delimiter}`);
     } else {
       lines.push(`${key}=${val}`);
     }

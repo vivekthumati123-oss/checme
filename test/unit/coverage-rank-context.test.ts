@@ -12,6 +12,8 @@ import {
   parseCoverageFile,
 } from "../../src/core/coverage";
 import { parseSourceFile } from "../../src/core/parse";
+import { trimContextForMaxChars } from "../../src/local/show";
+import { normalizeSummaryPaths } from "../../src/local/summaries";
 import { rankAndSelectSymbols } from "../../src/core/rank";
 
 const tempDirs: string[] = [];
@@ -267,5 +269,75 @@ describe("context builder, never-send, and import hints", () => {
 
     expect(ctx.sourceFile.truncated).toBe(true);
     expect(ctx.sourceFile.content.length).toBeLessThanOrEqual(1200);
+  });
+
+  it("blocks ./ neverSend paths and directory globs and keeps non-path backslashes intact in summaries", async () => {
+    expect(checkNeverSend("./secrets/keys.ts", "export const x = 1;", ["secrets/**"]).blocked).toBe(true);
+    expect(checkNeverSend("./secrets/keys.ts", "export const x = 1;", ["secrets"]).blocked).toBe(true);
+
+    const dir = makeTempDir();
+    mkdirSync(path.join(dir, "src"), { recursive: true });
+    writeFileSync(path.join(dir, "src", "secret.ts"), "export const token = 'abc';\n", "utf8");
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      privacy: { neverSend: ["src/secret.ts"] },
+      languages: {
+        javascript: {
+          testCommand: "npx vitest run",
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.{ext}"],
+        },
+      },
+    });
+    const callerCode = [
+      'import { token } from "./secret";',
+      `// ${"pad".repeat(400)}`,
+      "export function useTok(x: number) {",
+      "  const total = x + token.length;",
+      "  if (total > 10) return total;",
+      "  return total;",
+      "}",
+    ].join("\n");
+    const parsed = await parseSourceFile({ filePath: "src/caller.ts", content: callerCode });
+    const ctx = await buildFileContextPacket({
+      repoRoot: dir,
+      config: cfg,
+      fileId: "caller_1",
+      language: "javascript",
+      sourcePath: "src/caller.ts",
+      testPath: "test/caller.test.ts",
+      sourceContent: callerCode,
+      symbols: parsed.eligibleSymbols.map((s) => ({
+        symbolId: s.symbolId,
+        qualifiedName: s.qualifiedName,
+        kind: s.kind,
+        signature: s.signature,
+        range: { startLine: s.startLine, endLine: s.endLine },
+        executableLines: s.executableLinesFallback,
+        coveredLines: 0,
+        coveragePct: 0,
+        changedLines: [3],
+        complexity: s.complexity,
+        score: 5,
+      })),
+      allParsedSymbols: parsed.allSymbols,
+      imports: parsed.imports,
+    });
+    expect(ctx.referencedSignatures).toEqual([]);
+
+    const normed = normalizeSummaryPaths({
+      path: "src\\a.ts",
+      detail: "regex \\d+\\s+foo failed",
+      stagedFilesInGitStatus: [".unit-agent\\chat\\proposed\\a.ts"],
+    });
+    expect(normed.path).toBe("src/a.ts");
+    expect(normed.stagedFilesInGitStatus[0]).toBe(".unit-agent/chat/proposed/a.ts");
+    expect(normed.detail).toBe("regex \\d+\\s+foo failed");
+
+    const trimmedStrict = trimContextForMaxChars(ctx, 900);
+    expect(JSON.stringify(trimmedStrict, null, 2).length).toBeLessThanOrEqual(900);
+    expect(trimmedStrict.targets).toHaveLength(1);
   });
 });

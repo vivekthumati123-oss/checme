@@ -9,18 +9,40 @@ function unquoteGitPath(raw: string): string {
     return trimmed;
   }
   const inner = trimmed.slice(1, -1);
-  return inner.replace(/\\(["\\tnr])/g, (_, esc: string) => {
-    switch (esc) {
-      case "t":
-        return "\t";
-      case "n":
-        return "\n";
-      case "r":
-        return "\r";
-      default:
-        return esc;
+  const bytes: number[] = [];
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i]!;
+    if (ch === "\\" && i + 1 < inner.length) {
+      const next = inner[i + 1]!;
+      const octMatch = /^([0-7]{3})/.exec(inner.slice(i + 1));
+      if (octMatch?.[1]) {
+        bytes.push(Number.parseInt(octMatch[1], 8));
+        i += 3;
+        continue;
+      }
+      const ctrlMap: Record<string, number> = {
+        a: 7,
+        b: 8,
+        t: 9,
+        n: 10,
+        v: 11,
+        f: 12,
+        r: 13,
+        '"': 34,
+        "\\": 92,
+      };
+      if (next in ctrlMap) {
+        bytes.push(ctrlMap[next]!);
+        i += 1;
+        continue;
+      }
+      bytes.push(...Buffer.from(next, "utf8"));
+      i += 1;
+      continue;
     }
-  });
+    bytes.push(...Buffer.from(ch, "utf8"));
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 
 function stripDiffPrefix(raw: string, prefix: "a/" | "b/"): string {
@@ -41,6 +63,7 @@ export function parseUnifiedDiff(diffText: string): Record<string, number[]> {
   let currentPath: string | null = null;
   let isDeleted = false;
   let isBinary = false;
+  let sawHunkInFile = false;
 
   const ensureFile = (p: string): void => {
     if (!fileLineSets.has(p)) {
@@ -53,19 +76,20 @@ export function parseUnifiedDiff(diffText: string): Record<string, number[]> {
       currentPath = null;
       isDeleted = false;
       isBinary = false;
-      const match = /^diff --git ("[^"]+"|\S+) ("[^"]+"|\S+)/.exec(line);
+      sawHunkInFile = false;
+      const match = /^diff --git ("(?:\\.|[^"])+"|\S+) ("(?:\\.|[^"])+"|\S+)$/.exec(line);
       if (match?.[2]) {
         currentPath = stripDiffPrefix(match[2], "b/");
       }
       continue;
     }
 
-    if (line.startsWith("rename to ")) {
+    if (!sawHunkInFile && line.startsWith("rename to ")) {
       currentPath = unquoteGitPath(line.slice("rename to ".length)).replace(/^\.\//, "");
       continue;
     }
 
-    if (line === "+++ /dev/null" || line.startsWith("deleted file mode ")) {
+    if (!sawHunkInFile && (line === "+++ /dev/null" || line.startsWith("deleted file mode "))) {
       isDeleted = true;
       if (currentPath) {
         fileLineSets.delete(currentPath);
@@ -74,7 +98,7 @@ export function parseUnifiedDiff(diffText: string): Record<string, number[]> {
       continue;
     }
 
-    if (line.startsWith("Binary files ") || line === "GIT binary patch") {
+    if (!sawHunkInFile && (line.startsWith("Binary files ") || line === "GIT binary patch")) {
       isBinary = true;
       if (currentPath) {
         fileLineSets.delete(currentPath);
@@ -82,7 +106,7 @@ export function parseUnifiedDiff(diffText: string): Record<string, number[]> {
       continue;
     }
 
-    if (line.startsWith("+++ b/")) {
+    if (!sawHunkInFile && line.startsWith("+++ b/")) {
       currentPath = unquoteGitPath(line.slice("+++ b/".length));
       if (!isDeleted && !isBinary && currentPath) {
         ensureFile(currentPath);
@@ -90,7 +114,7 @@ export function parseUnifiedDiff(diffText: string): Record<string, number[]> {
       continue;
     }
 
-    if (line.startsWith("+++ ") && !line.startsWith("+++ /dev/null")) {
+    if (!sawHunkInFile && line.startsWith("+++ ") && !line.startsWith("+++ /dev/null")) {
       currentPath = stripDiffPrefix(line.slice(4), "b/");
       if (!isDeleted && !isBinary && currentPath) {
         ensureFile(currentPath);
@@ -99,6 +123,7 @@ export function parseUnifiedDiff(diffText: string): Record<string, number[]> {
     }
 
     if (currentPath && !isDeleted && !isBinary && line.startsWith("@@ ")) {
+      sawHunkInFile = true;
       ensureFile(currentPath);
       const match = HUNK_HEADER_RE.exec(line);
       if (match) {

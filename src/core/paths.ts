@@ -1,3 +1,4 @@
+import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { EXIT_CODES, StageError } from "../contracts";
@@ -19,7 +20,7 @@ function isSameOrSubpath(target: string, root: string): boolean {
 
 function stripRootPrefix(absPath: string, rootPath: string): string | null {
   const normAbs = normalizeSlashes(absPath);
-  const normRoot = normalizeSlashes(rootPath).replace(/\/+$/, "");
+  const normRoot = normalizeSlashes(path.resolve(rootPath)).replace(/\/+$/, "");
   if (process.platform === "win32") {
     if (normAbs.toLowerCase() === normRoot.toLowerCase()) return "";
     if (normAbs.toLowerCase().startsWith(`${normRoot.toLowerCase()}/`)) {
@@ -32,6 +33,53 @@ function stripRootPrefix(absPath: string, rootPath: string): string | null {
     return normAbs.slice(normRoot.length + 1);
   }
   return null;
+}
+
+/**
+ * Verify that `targetPath` has no symlink segments (including dangling leaf symlinks)
+ * and resolves inside `realRoot`.
+ */
+export function isSafeRealPathInsideRoot(
+  targetPath: string,
+  rootDir: string,
+  opts: { allowMissingLeaf?: boolean; requireRegularFileIfExists?: boolean } = {},
+): boolean {
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(rootDir);
+  } catch {
+    return false;
+  }
+  const absRoot = path.resolve(rootDir);
+  const absTarget = path.resolve(rootDir, targetPath);
+  const rel = path.relative(absRoot, absTarget);
+  if (!rel || rel === "." || rel.startsWith("..") || path.isAbsolute(rel)) {
+    return false;
+  }
+  const parts = normalizeSlashes(rel).split("/").filter(Boolean);
+  let cur = absRoot;
+  let deepestExisting = absRoot;
+  for (let i = 0; i < parts.length; i += 1) {
+    cur = path.join(cur, parts[i]!);
+    const isLeaf = i === parts.length - 1;
+    try {
+      const st = lstatSync(cur);
+      if (st.isSymbolicLink()) return false;
+      if (!isLeaf && !st.isDirectory()) return false;
+      if (isLeaf && opts.requireRegularFileIfExists && !st.isFile()) return false;
+      deepestExisting = cur;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT" && opts.allowMissingLeaf) {
+        break;
+      }
+      return false;
+    }
+  }
+  try {
+    return isSameOrSubpath(realpathSync(deepestExisting), realRoot);
+  } catch {
+    return false;
+  }
 }
 
 export interface NormalizePathOptions {
@@ -65,20 +113,29 @@ export function toRepoPath(inputPath: string, repoRoot: string, opts: NormalizeP
 
   // Strip disposable copy root first (e.g., C:\Users\...\Temp\unit-agent-val-xyz\packages\app\src\a.ts
   // or /tmp/unit-agent-val-xyz/src/a.ts).
-  if (opts.copyRoot) {
+  const isAbsLike = path.posix.isAbsolute(slashNormalized) || /^[A-Za-z]:/.test(slashNormalized);
+  if (isAbsLike && opts.copyRoot) {
     const strippedCopy = stripRootPrefix(slashNormalized, opts.copyRoot);
     if (strippedCopy !== null) {
-      return cleanRepoRelative(strippedCopy);
+      const cleaned = cleanRepoRelative(strippedCopy);
+      if (!cleaned) {
+        throw new StageError("Empty path is not allowed.", EXIT_CODES.POLICY_OR_HASH, "prepare", "path_violation");
+      }
+      return cleaned;
     }
   }
 
-  const strippedRepo = stripRootPrefix(slashNormalized, repoRoot);
-  if (strippedRepo !== null) {
-    return cleanRepoRelative(strippedRepo);
-  }
+  if (isAbsLike) {
+    const strippedRepo = stripRootPrefix(slashNormalized, repoRoot);
+    if (strippedRepo !== null) {
+      const cleaned = cleanRepoRelative(strippedRepo);
+      if (!cleaned) {
+        throw new StageError("Empty path is not allowed.", EXIT_CODES.POLICY_OR_HASH, "prepare", "path_violation");
+      }
+      return cleaned;
+    }
 
-  // Handle POSIX paths stored in coverage reports generated inside Windows/POSIX copy roots.
-  if (path.posix.isAbsolute(slashNormalized) || /^[A-Za-z]:\//.test(slashNormalized)) {
+    // Handle POSIX paths stored in coverage reports generated inside Windows/POSIX copy roots.
     throw new StageError(
       `Path "${inputPath}" is outside repository root "${repoRoot}".`,
       EXIT_CODES.POLICY_OR_HASH,
@@ -90,7 +147,10 @@ export function toRepoPath(inputPath: string, repoRoot: string, opts: NormalizeP
   let rel = cleanRepoRelative(slashNormalized);
   const wd = opts.workingDirectory ? cleanRepoRelative(normalizeSlashes(opts.workingDirectory)) : "";
   if (wd && wd !== "." && rel !== wd && !rel.startsWith(`${wd}/`)) {
-    rel = `${wd}/${rel}`;
+    rel = cleanRepoRelative(`${wd}/${rel}`);
+  }
+  if (!rel) {
+    throw new StageError("Empty path is not allowed.", EXIT_CODES.POLICY_OR_HASH, "prepare", "path_violation");
   }
 
   const resolved = path.resolve(repoRoot, rel);
@@ -121,10 +181,11 @@ export function fromRepoPath(repoRelPath: string, workingDirectory = "."): strin
 }
 
 export function cleanRepoRelative(rel: string): string {
-  return rel
-    .replace(/\\/g, "/")
-    .replace(/^(\.\/)+/, "")
-    .replace(/\/+/g, "/")
+  const slashed = rel.replace(/\\/g, "/").replace(/\/+/g, "/");
+  const collapsed = path.posix.normalize(slashed);
+  if (collapsed === ".") return "";
+  return collapsed
     .replace(/^\/+/, "")
+    .replace(/^(?:\.\/)+/, "")
     .replace(/\/+$/, "");
 }

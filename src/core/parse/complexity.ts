@@ -3,12 +3,17 @@ import type Parser from "web-tree-sitter";
 const NESTED_FUNCTION_TYPES = new Set([
   "function_declaration",
   "function_expression",
+  "generator_function",
+  "generator_function_declaration",
   "arrow_function",
   "method_definition",
   "function_definition",
   "lambda",
   "class_declaration",
   "class_definition",
+  "record_declaration",
+  "interface_declaration",
+  "constructor_declaration",
   "lambda_expression",
 ]);
 
@@ -55,7 +60,6 @@ export const JAVA_COMPLEXITY_RULES: ComplexityRules = {
     "while_statement",
     "do_statement",
     "switch_label",
-    "switch_rule",
     "catch_clause",
     "ternary_expression",
   ]),

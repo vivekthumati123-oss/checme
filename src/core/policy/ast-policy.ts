@@ -37,13 +37,73 @@ export interface PolicyCheckOptions {
 }
 
 const JS_GLOBAL_ROOT_NAMES = new Set(["globalThis", "global", "window", "self"]);
-const JS_BANNED_PROCESS_IMPORTS = new Set(["chdir", "exit", "kill", "getBuiltinModule", "dlopen"]);
-const PY_BANNED_OS_ATTRS = new Set(["environ", "environb", "getenv", "putenv", "unsetenv", "system", "popen", "chdir"]);
-const JAVA_STDLIB_PREFIX_RE = /^(?:java\.lang|java\.nio\.file|java\.net\.http)\./;
+const JS_BANNED_PROCESS_IMPORTS = new Set([
+  "chdir",
+  "exit",
+  "kill",
+  "getBuiltinModule",
+  "dlopen",
+  "binding",
+  "_linkedBinding",
+  "mainModule",
+]);
+const JS_TRACKED_GLOBAL_FUNCTIONS = new Set(["eval", "Function", "fetch", "XMLHttpRequest"]);
+const PY_BANNED_OS_ATTRS = new Set([
+  "environ",
+  "environb",
+  "getenv",
+  "putenv",
+  "unsetenv",
+  "system",
+  "popen",
+  "chdir",
+  "execv",
+  "execl",
+  "execve",
+  "execvp",
+  "execvpe",
+  "execlp",
+  "execle",
+  "execlpe",
+  "spawnv",
+  "spawnl",
+  "spawnve",
+  "spawnvp",
+  "spawnvpe",
+  "spawnlp",
+  "spawnle",
+  "spawnlpe",
+  "posix_spawn",
+  "posix_spawnp",
+  "fork",
+  "forkpty",
+  "kill",
+  "remove",
+  "unlink",
+  "rmdir",
+  "rename",
+  "replace",
+  "__dict__",
+]);
+const PY_BANNED_BUILTIN_ATTRS = new Set(["eval", "exec", "__import__", "__dict__"]);
+const JAVA_STDLIB_PREFIX_RE =
+  /^(?:java\.lang|java\.nio\.file|java\.net\.http|java\.lang\.invoke|java\.nio\.channels)\./;
 
 function matchesBannedModule(specifier: string, bannedList: readonly string[]): boolean {
   const clean = specifier.replace(/^['"`]|['"`]$/g, "").trim();
-  return bannedList.some((b) => clean === b || clean.startsWith(`${b}/`) || clean.startsWith(`${b}.`));
+  return bannedList.some((raw) => {
+    const b = raw.trim();
+    if (!b) return false;
+    if (b.endsWith(".*")) {
+      const prefix = b.slice(0, -2);
+      return clean === b || clean === prefix || clean.startsWith(`${prefix}.`);
+    }
+    if (b.endsWith("/*")) {
+      const prefix = b.slice(0, -2);
+      return clean === b || clean === prefix || clean.startsWith(`${prefix}/`);
+    }
+    return clean === b || clean.startsWith(`${b}/`) || clean.startsWith(`${b}.`);
+  });
 }
 
 function extractRelativeImportTarget(importHint?: string): string | null {
@@ -92,6 +152,8 @@ function unwrapJsExpr(node: Parser.SyntaxNode | null | undefined): Parser.Syntax
       cur.type === "satisfies_expression"
     ) {
       cur = cur.namedChild(0);
+    } else if (cur.type === "sequence_expression") {
+      cur = cur.namedChildCount > 0 ? cur.namedChild(cur.namedChildCount - 1) : null;
     } else if (cur.type === "type_assertion") {
       cur = cur.namedChild(1);
     } else {
@@ -101,16 +163,43 @@ function unwrapJsExpr(node: Parser.SyntaxNode | null | undefined): Parser.Syntax
   return cur;
 }
 
-function extractJsStringLiteral(node: Parser.SyntaxNode | null | undefined): string | null {
+function decodeJsStringBody(raw: string): string {
+  return raw.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|u\{[0-9a-fA-F]+\}|n|r|t|\\|'|")/g, (m, esc: string) => {
+    if (esc === "n") return "\n";
+    if (esc === "r") return "\r";
+    if (esc === "t") return "\t";
+    if (esc === "\\" || esc === "'" || esc === '"') return esc;
+    if (esc.startsWith("x")) return String.fromCharCode(Number.parseInt(esc.slice(1), 16));
+    if (esc.startsWith("u{")) {
+      const cp = Number.parseInt(esc.slice(2, -1), 16);
+      return Number.isFinite(cp) && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    }
+    if (esc.startsWith("u")) return String.fromCharCode(Number.parseInt(esc.slice(1), 16));
+    return m;
+  });
+}
+
+function extractJsStringLiteral(node: Parser.SyntaxNode | null | undefined, depth = 0): string | null {
+  if (depth > 16) return null;
   const cur = unwrapJsExpr(node);
   if (!cur) return null;
   if (cur.type === "string") {
-    return cur.text.slice(1, -1);
+    return decodeJsStringBody(cur.text.slice(1, -1));
   }
   if (cur.type === "template_string") {
     const hasSub = cur.namedChildren.some((c) => c.type === "template_substitution");
     if (!hasSub) {
-      return cur.text.slice(1, -1);
+      return decodeJsStringBody(cur.text.slice(1, -1));
+    }
+  }
+  if (cur.type === "binary_expression") {
+    const hasPlus = cur.children.some((c) => !c.isNamed && c.text === "+");
+    if (hasPlus) {
+      const left = extractJsStringLiteral(cur.childForFieldName("left"), depth + 1);
+      const right = extractJsStringLiteral(cur.childForFieldName("right"), depth + 1);
+      if (left !== null && right !== null) {
+        return `${left}${right}`;
+      }
     }
   }
   return null;
@@ -154,11 +243,17 @@ function isJsProcessRef(
   }
   if (cur.type === "member_expression") {
     const prop = cur.childForFieldName("property")?.text ?? "";
-    return prop === "process" && isJsGlobalRoot(cur.childForFieldName("object"), globalAliases);
+    const obj = cur.childForFieldName("object");
+    if (prop === "process" && isJsGlobalRoot(obj, globalAliases)) return true;
+    if (prop === "default" && isJsProcessRef(obj, globalAliases, processAliases)) return true;
+    return false;
   }
   if (cur.type === "subscript_expression") {
     const key = extractJsStringLiteral(cur.childForFieldName("index"));
-    return key === "process" && isJsGlobalRoot(cur.childForFieldName("object"), globalAliases);
+    const obj = cur.childForFieldName("object");
+    if (key === "process" && isJsGlobalRoot(obj, globalAliases)) return true;
+    if (key === "default" && isJsProcessRef(obj, globalAliases, processAliases)) return true;
+    return false;
   }
   if (cur.type === "call_expression") {
     const fn = unwrapJsExpr(cur.childForFieldName("function"));
@@ -167,6 +262,32 @@ function isJsProcessRef(
       const arg0 = extractJsStringLiteral(cur.childForFieldName("arguments")?.namedChild(0));
       return Boolean(arg0 && isJsProcessImport(arg0));
     }
+  }
+  return false;
+}
+
+function isJsBuiltinContainer(
+  node: Parser.SyntaxNode | null | undefined,
+  targetName: "Reflect" | "Object",
+  globalAliases: ReadonlySet<string>,
+  containerAliases: ReadonlySet<string>,
+): boolean {
+  const cur = unwrapJsExpr(node);
+  if (!cur) return false;
+  if (cur.type === "identifier") {
+    return containerAliases.has(cur.text);
+  }
+  if (cur.type === "member_expression") {
+    return (
+      cur.childForFieldName("property")?.text === targetName &&
+      isJsGlobalRoot(cur.childForFieldName("object"), globalAliases)
+    );
+  }
+  if (cur.type === "subscript_expression") {
+    return (
+      extractJsStringLiteral(cur.childForFieldName("index")) === targetName &&
+      isJsGlobalRoot(cur.childForFieldName("object"), globalAliases)
+    );
   }
   return false;
 }
@@ -202,12 +323,18 @@ function extractJsObjectPatternProps(pattern: Parser.SyntaxNode): Array<{
 function collectJsAliases(root: Parser.SyntaxNode): {
   globalAliases: Set<string>;
   processAliases: Set<string>;
+  reflectAliases: Set<string>;
+  objectAliases: Set<string>;
+  callAliases: Map<string, string>;
 } {
   const globalAliases = new Set(JS_GLOBAL_ROOT_NAMES);
   const processAliases = new Set(["process"]);
+  const reflectAliases = new Set(["Reflect"]);
+  const objectAliases = new Set(["Object"]);
+  const callAliases = new Map<string, string>();
 
   for (const imp of root.descendantsOfType("import_statement")) {
-    const src = imp.childForFieldName("source")?.text.replace(/^['"]|['"]$/g, "") ?? "";
+    const src = extractJsStringLiteral(imp.childForFieldName("source")) ?? "";
     if (!isJsProcessImport(src)) continue;
     const clause = imp.namedChildren.find((c) => c.type === "import_clause");
     if (!clause) continue;
@@ -217,30 +344,103 @@ function collectJsAliases(root: Parser.SyntaxNode): {
       } else if (ch.type === "namespace_import") {
         const aliasId = ch.namedChildren.find((n) => n.type === "identifier");
         if (aliasId) processAliases.add(aliasId.text);
+      } else if (ch.type === "named_imports") {
+        for (const spec of ch.descendantsOfType("import_specifier")) {
+          const importedName = spec.childForFieldName("name")?.text ?? spec.namedChild(0)?.text ?? "";
+          const localName = spec.childForFieldName("alias")?.text ?? importedName;
+          if (importedName === "default" && localName) {
+            processAliases.add(localName);
+          }
+        }
       }
     }
   }
 
-  for (const decl of root.descendantsOfType(["variable_declarator", "assignment_expression"])) {
-    const lhs = decl.type === "variable_declarator" ? decl.childForFieldName("name") : decl.childForFieldName("left");
-    const rhs = decl.type === "variable_declarator" ? decl.childForFieldName("value") : decl.childForFieldName("right");
+  for (const impReq of root.descendantsOfType("import_require_clause")) {
+    const src = extractJsStringLiteral(impReq.childForFieldName("source")) ?? "";
+    const idNode = impReq.namedChildren.find((c) => c.type === "identifier");
+    if (idNode && isJsProcessImport(src)) {
+      processAliases.add(idNode.text);
+    }
+  }
+
+  for (const decl of root.descendantsOfType([
+    "variable_declarator",
+    "assignment_expression",
+    "assignment_pattern",
+    "required_parameter",
+    "optional_parameter",
+  ])) {
+    let lhs: Parser.SyntaxNode | null;
+    let rhs: Parser.SyntaxNode | null;
+    if (decl.type === "variable_declarator") {
+      lhs = decl.childForFieldName("name");
+      rhs = decl.childForFieldName("value");
+    } else if (decl.type === "assignment_expression" || decl.type === "assignment_pattern") {
+      lhs = decl.childForFieldName("left");
+      rhs = decl.childForFieldName("right");
+    } else {
+      lhs = decl.childForFieldName("pattern");
+      rhs = decl.childForFieldName("value");
+    }
     if (!lhs || !rhs) continue;
     if (lhs.type === "identifier") {
       if (isJsGlobalRoot(rhs, globalAliases)) {
         globalAliases.add(lhs.text);
       } else if (isJsProcessRef(rhs, globalAliases, processAliases)) {
         processAliases.add(lhs.text);
+      } else if (isJsBuiltinContainer(rhs, "Reflect", globalAliases, reflectAliases)) {
+        reflectAliases.add(lhs.text);
+      } else if (isJsBuiltinContainer(rhs, "Object", globalAliases, objectAliases)) {
+        objectAliases.add(lhs.text);
+      } else {
+        const callee = resolveJsCalleeName(
+          rhs,
+          globalAliases,
+          processAliases,
+          reflectAliases,
+          objectAliases,
+          callAliases,
+        );
+        if (JS_TRACKED_GLOBAL_FUNCTIONS.has(callee) || callee.startsWith("process.") || callee === "Reflect.get") {
+          callAliases.set(lhs.text, callee);
+        }
       }
-    } else if (lhs.type === "object_pattern" && isJsGlobalRoot(rhs, globalAliases)) {
-      for (const prop of extractJsObjectPatternProps(lhs)) {
-        if (prop.propName === "process" && prop.valueNode?.type === "identifier") {
-          processAliases.add(prop.valueNode.text);
+    } else if (lhs.type === "object_pattern") {
+      if (isJsGlobalRoot(rhs, globalAliases)) {
+        for (const prop of extractJsObjectPatternProps(lhs)) {
+          const targetId = prop.valueNode?.type === "identifier" ? prop.valueNode.text : prop.propName;
+          if (!targetId) continue;
+          if (prop.propName === "process") processAliases.add(targetId);
+          else if (prop.propName === "Reflect") reflectAliases.add(targetId);
+          else if (prop.propName === "Object") objectAliases.add(targetId);
+          else if (prop.propName && JS_TRACKED_GLOBAL_FUNCTIONS.has(prop.propName)) {
+            callAliases.set(targetId, prop.propName);
+          }
+        }
+      } else if (isJsProcessRef(rhs, globalAliases, processAliases)) {
+        for (const prop of extractJsObjectPatternProps(lhs)) {
+          const targetId = prop.valueNode?.type === "identifier" ? prop.valueNode.text : prop.propName;
+          if (targetId && prop.propName && JS_BANNED_PROCESS_IMPORTS.has(prop.propName)) {
+            callAliases.set(targetId, `process.${prop.propName}`);
+          }
+        }
+      }
+    } else if (lhs.type === "array_pattern" && unwrapJsExpr(rhs)?.type === "array") {
+      const rhsItems = unwrapJsExpr(rhs)!.namedChildren;
+      const lhsItems = lhs.namedChildren;
+      for (let i = 0; i < Math.min(lhsItems.length, rhsItems.length); i += 1) {
+        const lItem = lhsItems[i];
+        const rItem = rhsItems[i];
+        if (lItem?.type === "identifier" && rItem) {
+          if (isJsGlobalRoot(rItem, globalAliases)) globalAliases.add(lItem.text);
+          else if (isJsProcessRef(rItem, globalAliases, processAliases)) processAliases.add(lItem.text);
         }
       }
     }
   }
 
-  return { globalAliases, processAliases };
+  return { globalAliases, processAliases, reflectAliases, objectAliases, callAliases };
 }
 
 function checkJsObjectPatternOnTarget(
@@ -252,6 +452,15 @@ function checkJsObjectPatternOnTarget(
 ): void {
   if (!targetExpr) return;
   if (isJsProcessRef(targetExpr, globalAliases, processAliases)) {
+    for (const child of pattern.namedChildren) {
+      if (child.type === "rest_pattern") {
+        violations.push({
+          rule: "banned_env_access",
+          message: "Banned rest destructuring `{...rest} = process` exposes process.env.",
+          line: child.startPosition.row + 1,
+        });
+      }
+    }
     for (const prop of extractJsObjectPatternProps(pattern)) {
       if (prop.propName === "env") {
         violations.push({
@@ -267,12 +476,22 @@ function checkJsObjectPatternOnTarget(
   if (isJsGlobalRoot(targetExpr, globalAliases)) {
     for (const prop of extractJsObjectPatternProps(pattern)) {
       if (prop.propName === "process" && prop.valueNode?.type === "object_pattern") {
+        checkJsObjectPatternOnTarget(prop.valueNode, prop.valueNode, globalAliases, processAliases, violations);
         for (const nested of extractJsObjectPatternProps(prop.valueNode)) {
           if (nested.propName === "env") {
             violations.push({
               rule: "banned_env_access",
               message: 'Banned nested destructuring of "process.env" from global object.',
               line: nested.node.startPosition.row + 1,
+            });
+          }
+        }
+        for (const rest of prop.valueNode.namedChildren) {
+          if (rest.type === "rest_pattern") {
+            violations.push({
+              rule: "banned_env_access",
+              message: "Banned nested rest destructuring of process from global object.",
+              line: rest.startPosition.row + 1,
             });
           }
         }
@@ -285,10 +504,13 @@ function resolveJsCalleeName(
   fnNode: Parser.SyntaxNode,
   globalAliases: ReadonlySet<string>,
   processAliases: ReadonlySet<string>,
+  reflectAliases: ReadonlySet<string> = new Set(["Reflect"]),
+  objectAliases: ReadonlySet<string> = new Set(["Object"]),
+  callAliases: ReadonlyMap<string, string> = new Map(),
 ): string {
   const cur = unwrapJsExpr(fnNode) ?? fnNode;
   if (cur.type === "identifier") {
-    return cur.text;
+    return callAliases.get(cur.text) ?? cur.text;
   }
   if (cur.type === "import") {
     return "import";
@@ -305,6 +527,12 @@ function resolveJsCalleeName(
       }
       if (isJsProcessRef(obj, globalAliases, processAliases)) {
         return `process.${propName}`;
+      }
+      if (isJsBuiltinContainer(obj, "Reflect", globalAliases, reflectAliases)) {
+        return `Reflect.${propName}`;
+      }
+      if (isJsBuiltinContainer(obj, "Object", globalAliases, objectAliases)) {
+        return `Object.${propName}`;
       }
     }
   }
@@ -343,12 +571,12 @@ function checkJsPolicy(
   const violations: PolicyViolation[] = [];
   const bannedCalls = new Set(DEFAULT_BANNED_CALLS.javascript);
   const targetImport = extractRelativeImportTarget(opts.importHint);
-  const { globalAliases, processAliases } = collectJsAliases(root);
+  const { globalAliases, processAliases, reflectAliases, objectAliases, callAliases } = collectJsAliases(root);
   let testCount = 0;
   let assertionCount = 0;
 
   for (const imp of root.descendantsOfType("import_statement")) {
-    const src = imp.childForFieldName("source")?.text.replace(/^['"]|['"]$/g, "") ?? "";
+    const src = extractJsStringLiteral(imp.childForFieldName("source")) ?? "";
     if (matchesBannedModule(src, bannedModules)) {
       violations.push({
         rule: "banned_import",
@@ -376,9 +604,42 @@ function checkJsPolicy(
     }
   }
 
+  for (const exp of root.descendantsOfType("export_statement")) {
+    const srcNode = exp.childForFieldName("source");
+    if (!srcNode) continue;
+    const src = extractJsStringLiteral(srcNode) ?? "";
+    if (matchesBannedModule(src, bannedModules)) {
+      violations.push({
+        rule: "banned_import",
+        message: `Banned module re-export "${src}".`,
+        line: exp.startPosition.row + 1,
+      });
+    }
+    if (isJsProcessImport(src)) {
+      violations.push({
+        rule: "banned_env_access",
+        message: `Banned process re-export from "${src}".`,
+        line: exp.startPosition.row + 1,
+      });
+    }
+  }
+
+  for (const impReq of root.descendantsOfType("import_require_clause")) {
+    const src = extractJsStringLiteral(impReq.childForFieldName("source")) ?? "";
+    if (matchesBannedModule(src, bannedModules)) {
+      violations.push({
+        rule: "banned_import",
+        message: `Banned TypeScript import-require "${src}".`,
+        line: impReq.startPosition.row + 1,
+      });
+    }
+  }
+
   for (const expr of root.descendantsOfType("new_expression")) {
     const ctorNode = expr.childForFieldName("constructor");
-    const ctorName = ctorNode ? resolveJsCalleeName(ctorNode, globalAliases, processAliases) : "";
+    const ctorName = ctorNode
+      ? resolveJsCalleeName(ctorNode, globalAliases, processAliases, reflectAliases, objectAliases, callAliases)
+      : "";
     if (ctorName === "Function") {
       violations.push({
         rule: "banned_call",
@@ -396,23 +657,39 @@ function checkJsPolicy(
 
   for (const mem of root.descendantsOfType("member_expression")) {
     const prop = mem.childForFieldName("property")?.text ?? "";
-    if (prop === "env" && isJsProcessRef(mem.childForFieldName("object"), globalAliases, processAliases)) {
-      violations.push({
-        rule: "banned_env_access",
-        message: 'Banned access to "process.env".',
-        line: mem.startPosition.row + 1,
-      });
+    if (isJsProcessRef(mem.childForFieldName("object"), globalAliases, processAliases)) {
+      if (prop === "env") {
+        violations.push({
+          rule: "banned_env_access",
+          message: 'Banned access to "process.env".',
+          line: mem.startPosition.row + 1,
+        });
+      } else if (prop === "mainModule") {
+        violations.push({
+          rule: "banned_call",
+          message: 'Banned access to "process.mainModule".',
+          line: mem.startPosition.row + 1,
+        });
+      }
     }
   }
 
   for (const sub of root.descendantsOfType("subscript_expression")) {
     const key = extractJsStringLiteral(sub.childForFieldName("index"));
-    if (key === "env" && isJsProcessRef(sub.childForFieldName("object"), globalAliases, processAliases)) {
-      violations.push({
-        rule: "banned_env_access",
-        message: 'Banned subscript access to `process["env"]`.',
-        line: sub.startPosition.row + 1,
-      });
+    if (isJsProcessRef(sub.childForFieldName("object"), globalAliases, processAliases)) {
+      if (key === "env") {
+        violations.push({
+          rule: "banned_env_access",
+          message: 'Banned subscript access to `process["env"]`.',
+          line: sub.startPosition.row + 1,
+        });
+      } else if (key === "mainModule") {
+        violations.push({
+          rule: "banned_call",
+          message: 'Banned subscript access to `process["mainModule"]`.',
+          line: sub.startPosition.row + 1,
+        });
+      }
     }
   }
 
@@ -460,15 +737,31 @@ function checkJsPolicy(
     const args = call.childForFieldName("arguments");
     if (!fn) continue;
     const fnText = fn.text;
-    const calleeName = resolveJsCalleeName(fn, globalAliases, processAliases);
+    const calleeName = resolveJsCalleeName(
+      fn,
+      globalAliases,
+      processAliases,
+      reflectAliases,
+      objectAliases,
+      callAliases,
+    );
 
     if (calleeName === "require" || calleeName === "import" || calleeName === "process.getBuiltinModule") {
       const arg0Node = args?.namedChild(0);
-      const arg0 = extractJsStringLiteral(arg0Node) ?? arg0Node?.text.replace(/^['"`]|['"`]$/g, "") ?? "";
-      if (matchesBannedModule(arg0, bannedModules)) {
+      const arg0Lit = extractJsStringLiteral(arg0Node);
+      if (arg0Node && arg0Lit === null) {
         violations.push({
           rule: "banned_import",
-          message: `Banned dynamic import/require "${arg0}".`,
+          message: `Dynamic ${calleeName}() argument is disallowed.`,
+          line: call.startPosition.row + 1,
+        });
+      } else if (
+        arg0Lit !== null &&
+        (matchesBannedModule(arg0Lit, bannedModules) || /^(?:data|file|https?):/i.test(arg0Lit))
+      ) {
+        violations.push({
+          rule: "banned_import",
+          message: `Banned dynamic import/require "${arg0Lit}".`,
           line: call.startPosition.row + 1,
         });
       }
@@ -484,12 +777,29 @@ function checkJsPolicy(
 
     if (
       (calleeName === "Reflect.get" || calleeName === "Object.getOwnPropertyDescriptor") &&
-      isJsProcessRef(args?.namedChild(0), globalAliases, processAliases) &&
-      extractJsStringLiteral(args?.namedChild(1)) === "env"
+      isJsProcessRef(args?.namedChild(0), globalAliases, processAliases)
+    ) {
+      const propKey = extractJsStringLiteral(args?.namedChild(1));
+      if (propKey === "env" || propKey === null) {
+        violations.push({
+          rule: "banned_env_access",
+          message: `Banned env lookup via "${calleeName}(process, ...)".`,
+          line: call.startPosition.row + 1,
+        });
+      }
+    }
+
+    if (
+      (calleeName === "Object.getOwnPropertyDescriptors" ||
+        calleeName === "Object.entries" ||
+        calleeName === "Object.keys" ||
+        calleeName === "Object.values") &&
+      (isJsProcessRef(args?.namedChild(0), globalAliases, processAliases) ||
+        isJsGlobalRoot(args?.namedChild(0), globalAliases))
     ) {
       violations.push({
         rule: "banned_env_access",
-        message: `Banned env lookup via "${calleeName}(process, 'env')".`,
+        message: `Banned reflective inspection "${calleeName}(...)" on process/global.`,
         line: call.startPosition.row + 1,
       });
     }
@@ -508,7 +818,11 @@ function checkJsPolicy(
       });
     }
 
-    if (fnText === "it" || fnText === "test") {
+    if (
+      /^(?:it|test)(?:\.concurrent)?$/.test(fnText) ||
+      (fn.type === "call_expression" &&
+        /^(?:it|test)(?:\.concurrent)?\.each$/.test(fn.childForFieldName("function")?.text ?? ""))
+    ) {
       testCount += 1;
     }
 
@@ -563,14 +877,101 @@ function extractPythonImportNameAndAlias(node: Parser.SyntaxNode): { name: strin
   return { name: node.text };
 }
 
-function extractPythonStringLiteral(node: Parser.SyntaxNode | null | undefined): string | null {
-  if (!node || node.type !== "string") return null;
-  if (node.namedChildren.some((c) => c.type === "interpolation")) return null;
-  const contentParts = node.namedChildren.filter((c) => c.type === "string_content").map((c) => c.text);
-  if (contentParts.length > 0) {
-    return contentParts.join("");
+function unwrapPyExpr(node: Parser.SyntaxNode | null | undefined): Parser.SyntaxNode | null {
+  let cur = node ?? null;
+  while (cur?.type === "parenthesized_expression") {
+    cur = cur.namedChild(0);
   }
-  return node.text.replace(/^[rRuUfFbB]{0,2}(?:'''|"""|'|")|(?:'''|"""|'|")$/g, "");
+  return cur;
+}
+
+function decodePythonStringBody(raw: string): string {
+  return raw.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|n|r|t|\\|'|")/g, (m, esc: string) => {
+    if (esc === "n") return "\n";
+    if (esc === "r") return "\r";
+    if (esc === "t") return "\t";
+    if (esc === "\\" || esc === "'" || esc === '"') return esc;
+    if (esc.startsWith("x") || esc.startsWith("u") || esc.startsWith("U")) {
+      const cp = Number.parseInt(esc.slice(1), 16);
+      return Number.isFinite(cp) && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    }
+    return m;
+  });
+}
+
+function extractPythonStringLiteral(node: Parser.SyntaxNode | null | undefined, depth = 0): string | null {
+  if (depth > 16) return null;
+  const cur = unwrapPyExpr(node);
+  if (!cur) return null;
+  if (cur.type === "concatenated_string") {
+    let acc = "";
+    for (const part of cur.namedChildren) {
+      const sub = extractPythonStringLiteral(part, depth + 1);
+      if (sub === null) return null;
+      acc += sub;
+    }
+    return acc;
+  }
+  if (cur.type === "binary_operator") {
+    const hasPlus = cur.children.some((c) => !c.isNamed && c.text === "+");
+    if (hasPlus) {
+      const left = extractPythonStringLiteral(cur.childForFieldName("left"), depth + 1);
+      const right = extractPythonStringLiteral(cur.childForFieldName("right"), depth + 1);
+      if (left !== null && right !== null) return `${left}${right}`;
+    }
+    return null;
+  }
+  if (cur.type !== "string") return null;
+  if (cur.namedChildren.some((c) => c.type === "interpolation")) return null;
+  const prefixMatch = /^([rRuUfFbB]{0,2})(?:'''|"""|'|")/.exec(cur.text);
+  const isRaw = Boolean(prefixMatch?.[1] && /[rR]/.test(prefixMatch[1]));
+  const contentParts = cur.namedChildren.filter((c) => c.type === "string_content").map((c) => c.text);
+  const rawBody =
+    contentParts.length > 0
+      ? contentParts.join("")
+      : cur.text.replace(/^[rRuUfFbB]{0,2}(?:'''|"""|'|")|(?:'''|"""|'|")$/g, "");
+  return isRaw ? rawBody : decodePythonStringBody(rawBody);
+}
+
+function resolvePythonCallableName(
+  fnNode: Parser.SyntaxNode | null | undefined,
+  osAliases: ReadonlySet<string>,
+  builtinsAliases: ReadonlySet<string>,
+  importlibAliases: ReadonlySet<string>,
+  callAliases: ReadonlyMap<string, string>,
+): string {
+  const cur = unwrapPyExpr(fnNode);
+  if (!cur) return "";
+  if (cur.type === "identifier") {
+    return callAliases.get(cur.text) ?? cur.text;
+  }
+  if (cur.type === "attribute") {
+    const obj = unwrapPyExpr(cur.childForFieldName("object"));
+    const prop = cur.childForFieldName("attribute")?.text ?? "";
+    if (obj?.type === "identifier") {
+      if (osAliases.has(obj.text)) return `os.${prop}`;
+      if (builtinsAliases.has(obj.text)) return prop;
+      if (importlibAliases.has(obj.text)) return `importlib.${prop}`;
+    }
+  }
+  if (cur.type === "subscript") {
+    const val = unwrapPyExpr(cur.childForFieldName("value"));
+    const key = extractPythonStringLiteral(cur.childForFieldName("subscript"));
+    if (
+      key &&
+      val?.type === "attribute" &&
+      val.childForFieldName("attribute")?.text === "__dict__" &&
+      val.childForFieldName("object")?.type === "identifier"
+    ) {
+      const rootName = val.childForFieldName("object")!.text;
+      if (osAliases.has(rootName)) return `os.${key}`;
+      if (builtinsAliases.has(rootName)) return key;
+    }
+    if (key && val?.type === "identifier" && (builtinsAliases.has(val.text) || val.text === "__builtins__")) {
+      return key;
+    }
+  }
+  return cur.text;
 }
 
 function checkPythonPolicy(
@@ -582,7 +983,9 @@ function checkPythonPolicy(
   const bannedCalls = new Set(DEFAULT_BANNED_CALLS.python);
   const targetMod = extractRelativeImportTarget(opts.importHint);
   const osAliases = new Set(["os"]);
-  const builtinsAliases = new Set(["builtins"]);
+  const builtinsAliases = new Set(["builtins", "__builtins__"]);
+  const importlibAliases = new Set(["importlib"]);
+  const sysAliases = new Set(["sys"]);
   const envAliases = new Set<string>();
   const callAliases = new Map<string, string>();
   let testCount = 0;
@@ -598,10 +1001,14 @@ function checkPythonPolicy(
           line: imp.startPosition.row + 1,
         });
       }
-      if (name === "os") {
-        osAliases.add(alias ?? "os");
+      if (name === "os" || name === "posix" || name === "nt") {
+        osAliases.add(alias ?? name);
       } else if (name === "builtins") {
         builtinsAliases.add(alias ?? "builtins");
+      } else if (name === "importlib") {
+        importlibAliases.add(alias ?? "importlib");
+      } else if (name === "sys") {
+        sysAliases.add(alias ?? "sys");
       }
     }
   }
@@ -618,7 +1025,15 @@ function checkPythonPolicy(
     }
 
     if (imp.children.some((c) => c.type === "wildcard_import")) {
-      if (mod === "os" || mod === "builtins" || mod === "shutil" || mod === "importlib") {
+      if (
+        mod === "os" ||
+        mod === "posix" ||
+        mod === "nt" ||
+        mod === "builtins" ||
+        mod === "shutil" ||
+        mod === "importlib" ||
+        mod === "subprocess"
+      ) {
         violations.push({
           rule: "banned_import",
           message: `Banned Python wildcard import "from ${mod} import *".`,
@@ -640,32 +1055,117 @@ function checkPythonPolicy(
       }
       if (qualified === "os.environ" || qualified === "os.environb") {
         envAliases.add(alias ?? name);
-      } else if (bannedCalls.has(qualified)) {
-        callAliases.set(alias ?? name, qualified);
+      } else if (bannedCalls.has(qualified) || qualified === "getattr" || qualified === "builtins.getattr") {
+        callAliases.set(alias ?? name, qualified === "builtins.getattr" ? "getattr" : qualified);
+      }
+    }
+  }
+
+  for (const assign of root.descendantsOfType("assignment")) {
+    const lhs = unwrapPyExpr(assign.childForFieldName("left"));
+    const rhs = unwrapPyExpr(assign.childForFieldName("right"));
+    if (lhs?.type !== "identifier" || !rhs) continue;
+    if (rhs.type === "identifier") {
+      if (osAliases.has(rhs.text)) osAliases.add(lhs.text);
+      else if (builtinsAliases.has(rhs.text)) builtinsAliases.add(lhs.text);
+      else if (importlibAliases.has(rhs.text)) importlibAliases.add(lhs.text);
+      else if (sysAliases.has(rhs.text)) sysAliases.add(lhs.text);
+      else if (envAliases.has(rhs.text)) envAliases.add(lhs.text);
+      else if (callAliases.has(rhs.text)) callAliases.set(lhs.text, callAliases.get(rhs.text)!);
+      else if (bannedCalls.has(rhs.text) || rhs.text === "getattr" || rhs.text === "vars") {
+        callAliases.set(lhs.text, rhs.text);
+      }
+    } else if (rhs.type === "attribute") {
+      const rObj = unwrapPyExpr(rhs.childForFieldName("object"));
+      const rAttr = rhs.childForFieldName("attribute")?.text ?? "";
+      if (rObj?.type === "identifier") {
+        if (osAliases.has(rObj.text) && (rAttr === "environ" || rAttr === "environb")) {
+          envAliases.add(lhs.text);
+        } else {
+          const resolved = resolvePythonCallableName(rhs, osAliases, builtinsAliases, importlibAliases, callAliases);
+          if (bannedCalls.has(resolved) || resolved === "getattr" || resolved === "vars") {
+            callAliases.set(lhs.text, resolved);
+          }
+        }
+      }
+    } else if (rhs.type === "call") {
+      const fnName = resolvePythonCallableName(
+        rhs.childForFieldName("function"),
+        osAliases,
+        builtinsAliases,
+        importlibAliases,
+        callAliases,
+      );
+      if (fnName === "getattr") {
+        const gArgs = rhs.childForFieldName("arguments");
+        const gArg0 = unwrapPyExpr(gArgs?.namedChild(0));
+        const gArg1 = extractPythonStringLiteral(gArgs?.namedChild(1));
+        if (gArg0?.type === "identifier" && osAliases.has(gArg0.text) && gArg1) {
+          if (gArg1 === "environ" || gArg1 === "environb") envAliases.add(lhs.text);
+          else callAliases.set(lhs.text, `os.${gArg1}`);
+        } else if (gArg0?.type === "identifier" && builtinsAliases.has(gArg0.text) && gArg1) {
+          callAliases.set(lhs.text, gArg1);
+        }
       }
     }
   }
 
   for (const attr of root.descendantsOfType("attribute")) {
-    const obj = attr.childForFieldName("object");
+    const obj = unwrapPyExpr(attr.childForFieldName("object"));
     const prop = attr.childForFieldName("attribute")?.text ?? "";
-    if (obj?.type === "identifier" && osAliases.has(obj.text) && (prop === "environ" || prop === "environb")) {
-      violations.push({
-        rule: "banned_env_access",
-        message: `Banned Python env access "${obj.text}.${prop}".`,
-        line: attr.startPosition.row + 1,
-      });
+    if (obj?.type === "identifier") {
+      if (osAliases.has(obj.text) && (prop === "environ" || prop === "environb" || prop === "__dict__")) {
+        violations.push({
+          rule: prop === "__dict__" ? "banned_call" : "banned_env_access",
+          message: `Banned Python env/reflection access "${obj.text}.${prop}".`,
+          line: attr.startPosition.row + 1,
+        });
+      } else if (builtinsAliases.has(obj.text) && prop === "__dict__") {
+        violations.push({
+          rule: "banned_call",
+          message: `Banned Python builtins reflection access "${obj.text}.__dict__".`,
+          line: attr.startPosition.row + 1,
+        });
+      } else if (envAliases.has(obj.text)) {
+        violations.push({
+          rule: "banned_env_access",
+          message: `Banned Python env attribute access "${obj.text}.${prop}".`,
+          line: attr.startPosition.row + 1,
+        });
+      }
     }
   }
 
   for (const sub of root.descendantsOfType("subscript")) {
-    const val = sub.childForFieldName("value");
-    if (val?.type === "identifier" && envAliases.has(val.text)) {
-      violations.push({
-        rule: "banned_env_access",
-        message: `Banned Python env subscript "${val.text}[...]".`,
-        line: sub.startPosition.row + 1,
-      });
+    const val = unwrapPyExpr(sub.childForFieldName("value"));
+    if (val?.type === "identifier") {
+      if (envAliases.has(val.text)) {
+        violations.push({
+          rule: "banned_env_access",
+          message: `Banned Python env subscript "${val.text}[...]".`,
+          line: sub.startPosition.row + 1,
+        });
+      } else if (builtinsAliases.has(val.text)) {
+        violations.push({
+          rule: "banned_call",
+          message: `Banned Python builtins subscript "${val.text}[...]".`,
+          line: sub.startPosition.row + 1,
+        });
+      }
+    } else if (
+      val?.type === "attribute" &&
+      val.childForFieldName("object")?.type === "identifier" &&
+      sysAliases.has(val.childForFieldName("object")!.text) &&
+      val.childForFieldName("attribute")?.text === "modules"
+    ) {
+      const modKey = extractPythonStringLiteral(sub.childForFieldName("subscript"));
+      if (modKey === null || modKey === "os" || modKey === "builtins" || matchesBannedModule(modKey, bannedModules)) {
+        violations.push({
+          rule: "banned_import",
+          message: `Banned Python sys.modules access "${sub.text}".`,
+          line: sub.startPosition.row + 1,
+        });
+      }
     }
   }
 
@@ -688,20 +1188,9 @@ function checkPythonPolicy(
   }
 
   for (const call of root.descendantsOfType("call")) {
-    const fnNode = call.childForFieldName("function");
+    const fnNode = unwrapPyExpr(call.childForFieldName("function"));
     const fnText = fnNode?.text ?? "";
-    let canonicalFn = fnText;
-    if (fnNode?.type === "identifier" && callAliases.has(fnNode.text)) {
-      canonicalFn = callAliases.get(fnNode.text)!;
-    } else if (fnNode?.type === "attribute") {
-      const obj = fnNode.childForFieldName("object");
-      const prop = fnNode.childForFieldName("attribute")?.text ?? "";
-      if (obj?.type === "identifier" && osAliases.has(obj.text)) {
-        canonicalFn = `os.${prop}`;
-      } else if (obj?.type === "identifier" && builtinsAliases.has(obj.text)) {
-        canonicalFn = prop;
-      }
-    }
+    const canonicalFn = resolvePythonCallableName(fnNode, osAliases, builtinsAliases, importlibAliases, callAliases);
 
     if (bannedCalls.has(canonicalFn)) {
       violations.push({
@@ -711,14 +1200,46 @@ function checkPythonPolicy(
       });
     }
 
+    const args = call.childForFieldName("arguments");
     if (canonicalFn === "getattr") {
-      const args = call.childForFieldName("arguments");
-      const arg0 = args?.namedChild(0);
+      const arg0 = unwrapPyExpr(args?.namedChild(0));
       const arg1 = extractPythonStringLiteral(args?.namedChild(1));
-      if (arg0?.type === "identifier" && osAliases.has(arg0.text) && arg1 && PY_BANNED_OS_ATTRS.has(arg1)) {
+      if (arg0?.type === "identifier" && osAliases.has(arg0.text)) {
+        if (arg1 === null || PY_BANNED_OS_ATTRS.has(arg1)) {
+          violations.push({
+            rule: arg1 === "environ" || arg1 === "environb" ? "banned_env_access" : "banned_call",
+            message: `Banned Python reflection access "getattr(${arg0.text}, ${arg1 ? `'${arg1}'` : "..."})".`,
+            line: call.startPosition.row + 1,
+          });
+        }
+      } else if (arg0?.type === "identifier" && builtinsAliases.has(arg0.text)) {
+        if (arg1 === null || PY_BANNED_BUILTIN_ATTRS.has(arg1)) {
+          violations.push({
+            rule: "banned_call",
+            message: `Banned Python builtins reflection "getattr(${arg0.text}, ${arg1 ? `'${arg1}'` : "..."})".`,
+            line: call.startPosition.row + 1,
+          });
+        }
+      }
+    }
+
+    if (canonicalFn === "vars") {
+      const arg0 = unwrapPyExpr(args?.namedChild(0));
+      if (arg0?.type === "identifier" && (osAliases.has(arg0.text) || builtinsAliases.has(arg0.text))) {
         violations.push({
-          rule: arg1 === "environ" || arg1 === "environb" ? "banned_env_access" : "banned_call",
-          message: `Banned Python reflection access "getattr(${arg0.text}, '${arg1}')".`,
+          rule: "banned_call",
+          message: `Banned Python reflection call "vars(${arg0.text})".`,
+          line: call.startPosition.row + 1,
+        });
+      }
+    }
+
+    for (const arg of args?.namedChildren ?? []) {
+      const unwrappedArg = unwrapPyExpr(arg);
+      if (unwrappedArg?.type === "identifier" && envAliases.has(unwrappedArg.text)) {
+        violations.push({
+          rule: "banned_env_access",
+          message: `Banned Python env pass-by-value "${unwrappedArg.text}".`,
           line: call.startPosition.row + 1,
         });
       }
@@ -731,11 +1252,7 @@ function checkPythonPolicy(
       targetMod &&
       (fnText === "patch" || fnText === "mock.patch" || fnText === "unittest.mock.patch" || fnText === "mocker.patch")
     ) {
-      const arg0 =
-        call
-          .childForFieldName("arguments")
-          ?.namedChild(0)
-          ?.text.replace(/^['"]|['"]$/g, "") ?? "";
+      const arg0 = extractPythonStringLiteral(args?.namedChild(0)) ?? "";
       if (arg0 === targetMod || arg0.startsWith(`${targetMod}.`)) {
         violations.push({
           rule: "mock_unit_under_test",
@@ -822,10 +1339,19 @@ function checkJavaPolicy(
   for (const cls of root.descendantsOfType("class_declaration")) {
     const clsMods = cls.children.find((c) => c.type === "modifiers")?.text ?? "";
     const clsName = cls.childForFieldName("name")?.text;
-    if (/\bpublic\b/.test(clsMods) && clsName && clsName !== expectedClass) {
+    const isTopLevel = cls.parent?.type === "program";
+    if (isTopLevel && /\bpublic\b/.test(clsMods) && clsName && clsName !== expectedClass) {
       violations.push({
         rule: "java_classname_mismatch",
         message: `Public Java test class "${clsName}" must match filename "${expectedClass}".`,
+        line: cls.startPosition.row + 1,
+      });
+    }
+    const superCls = cls.childForFieldName("superclass")?.text ?? "";
+    if (/\b(?:java\.lang\.)?ClassLoader\b/.test(superCls)) {
+      violations.push({
+        rule: "banned_call",
+        message: `Extending ClassLoader ("${superCls}") is disallowed.`,
         line: cls.startPosition.row + 1,
       });
     }
@@ -847,7 +1373,16 @@ function checkJavaPolicy(
       const shortStatic = clean.replace(JAVA_STDLIB_PREFIX_RE, "");
       if (clean.endsWith(".*")) {
         const cls = shortStatic.slice(0, -2);
-        if (cls === "System" || cls === "Runtime" || cls === "Files" || cls === "HttpClient") {
+        if (
+          cls === "System" ||
+          cls === "Runtime" ||
+          cls === "Files" ||
+          cls === "HttpClient" ||
+          cls === "Class" ||
+          cls === "MethodHandles" ||
+          cls === "SocketChannel" ||
+          cls === "URI"
+        ) {
           staticWildcardClasses.add(cls);
         }
       } else if (bannedCalls.has(clean) || bannedCalls.has(shortStatic)) {
@@ -903,7 +1438,7 @@ function checkJavaPolicy(
 
   for (const ann of root.descendantsOfType(["marker_annotation", "annotation"])) {
     const name = ann.childForFieldName("name")?.text ?? "";
-    if (name === "Test" || name.endsWith(".Test")) {
+    if (/^(?:.*?\.)?(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)$/.test(name)) {
       testCount += 1;
     }
     if (name === "Disabled" || name === "Ignore" || name.endsWith(".Disabled") || name.endsWith(".Ignore")) {

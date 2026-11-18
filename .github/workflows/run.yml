@@ -54,36 +54,38 @@ jobs:
           command: guard
           github-token: "${{ github.token }}"
       - id: plan
-        if: steps.guard.outputs.proceed == 'true'
+        if: steps.guard.outcome == 'success' && steps.guard.outputs.proceed == 'true' && steps.guard.outputs.status == 'ok'
         uses: ./.github/actions/cli
         with:
           command: plan
       - uses: actions/setup-node@v4
-        if: steps.guard.outputs.proceed == 'true' && contains(fromJSON(steps.plan.outputs.languages), 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.plan.outputs.languages != '' && steps.plan.outputs.toolchains != '' && contains(fromJSON(steps.plan.outputs.languages), 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
         with:
           node-version: ${{ fromJSON(steps.plan.outputs.toolchains).node.version }}
           node-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).node.file }}
       - uses: actions/setup-python@v5
-        if: steps.guard.outputs.proceed == 'true' && contains(fromJSON(steps.plan.outputs.languages), 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.plan.outputs.languages != '' && steps.plan.outputs.toolchains != '' && contains(fromJSON(steps.plan.outputs.languages), 'python') && fromJSON(steps.plan.outputs.toolchains).python.source != 'runner-default'
         with:
           python-version: ${{ fromJSON(steps.plan.outputs.toolchains).python.version }}
           python-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).python.file }}
       - uses: actions/setup-java@v4
-        if: steps.guard.outputs.proceed == 'true' && contains(fromJSON(steps.plan.outputs.languages), 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
+        if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.plan.outputs.languages != '' && steps.plan.outputs.toolchains != '' && contains(fromJSON(steps.plan.outputs.languages), 'java') && fromJSON(steps.plan.outputs.toolchains).java.source != 'runner-default'
         with:
           distribution: ${{ fromJSON(steps.plan.outputs.toolchains).java.distribution }}
           java-version: ${{ fromJSON(steps.plan.outputs.toolchains).java.version }}
           java-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).java.file }}
-      - if: steps.guard.outputs.proceed == 'true'
+      - id: install
+        if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok'
         uses: ./.github/actions/cli
         with:
           command: install
-      - if: steps.guard.outputs.proceed == 'true'
+      - id: baseline
+        if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.install.outputs.status == 'ok'
         uses: ./.github/actions/cli
         with:
           command: baseline
       - id: detect
-        if: steps.guard.outputs.proceed == 'true'
+        if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.install.outputs.status == 'ok' && steps.baseline.outputs.status == 'ok'
         uses: ./.github/actions/cli
         with:
           command: detect
@@ -106,6 +108,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: {}
+    outputs:
+      status: ${{ steps.gen.outputs.status }}
     steps:
       - uses: ./.github/actions/setup-agent
         with:
@@ -114,7 +118,8 @@ jobs:
         with:
           name: ua-prepare
           path: .unit-agent/prepare
-      - uses: ./.github/actions/cli
+      - id: gen
+        uses: ./.github/actions/cli
         with:
           command: generate
           copilot-token: "${{ secrets.COPILOT_GITHUB_TOKEN }}"
@@ -128,7 +133,7 @@ jobs:
 
   validate1:
     needs: [prepare, generate]
-    if: needs.prepare.outputs.has_work == 'true' && needs.generate.result == 'success'
+    if: needs.prepare.outputs.has_work == 'true' && needs.generate.result == 'success' && needs.generate.outputs.status == 'ok'
     uses: ./.github/workflows/validate.yml
     permissions:
       contents: read
@@ -150,6 +155,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: {}
+    outputs:
+      status: ${{ steps.rep.outputs.status }}
     steps:
       - uses: ./.github/actions/setup-agent
         with:
@@ -166,7 +173,8 @@ jobs:
         with:
           name: ua-validate1
           path: .unit-agent/validate1
-      - uses: ./.github/actions/cli
+      - id: rep
+        uses: ./.github/actions/cli
         with:
           command: repair
           copilot-token: "${{ secrets.COPILOT_GITHUB_TOKEN }}"
@@ -180,7 +188,7 @@ jobs:
 
   validate2:
     needs: [prepare, repair]
-    if: needs.repair.result == 'success'
+    if: needs.repair.result == 'success' && needs.repair.outputs.status == 'ok'
     uses: ./.github/workflows/validate.yml
     permissions:
       contents: read

@@ -14,9 +14,11 @@ export function resolvePythonRoots(params: {
   const wdAbs = path.resolve(params.repoRoot, wdRel || ".");
 
   const addRoot = (candidateRel: string): void => {
-    const joined =
-      wdRel && wdRel !== "." ? cleanRepoRelative(`${wdRel}/${candidateRel}`) : cleanRepoRelative(candidateRel);
-    roots.add(joined || ".");
+    const cleanCand = cleanRepoRelative(normalizeSlashes(candidateRel)).replace(/^\/+/, "");
+    const rawJoined =
+      wdRel && wdRel !== "." ? (cleanCand && cleanCand !== "." ? `${wdRel}/${cleanCand}` : wdRel) : cleanCand || ".";
+    const joined = cleanRepoRelative(path.posix.normalize(rawJoined));
+    roots.add(!joined || joined === "." ? "." : joined);
   };
 
   if (params.configuredPythonPath) {
@@ -28,18 +30,24 @@ export function resolvePythonRoots(params: {
   // Check pyproject.toml pythonpath / setuptools src where
   const pyprojectPath = path.join(wdAbs, "pyproject.toml");
   if (existsSync(pyprojectPath)) {
-    const raw = readFileSync(pyprojectPath, "utf8");
-    const pyPathMatch = /pythonpath\s*=\s*\[([^\]]+)\]/s.exec(raw);
-    if (pyPathMatch?.[1]) {
-      for (const m of pyPathMatch[1].matchAll(/["']([^"']+)["']/g)) {
+    const raw = readFileSync(pyprojectPath, "utf8").replace(/^\s*#[^\r\n]*$/gm, "");
+    const pyPathArrMatch = /pythonpath\s*=\s*\[([^\]]+)\]/s.exec(raw);
+    if (pyPathArrMatch?.[1]) {
+      for (const m of pyPathArrMatch[1].matchAll(/["']([^"']+)["']/g)) {
         if (m[1]) addRoot(m[1]);
       }
+    } else {
+      const pyPathStrMatch = /pythonpath\s*=\s*["']([^"']+)["']/m.exec(raw);
+      if (pyPathStrMatch?.[1]) addRoot(pyPathStrMatch[1]);
     }
-    const whereMatch = /where\s*=\s*\[([^\]]+)\]/s.exec(raw);
-    if (whereMatch?.[1]) {
-      for (const m of whereMatch[1].matchAll(/["']([^"']+)["']/g)) {
+    const whereArrMatch = /where\s*=\s*\[([^\]]+)\]/s.exec(raw);
+    if (whereArrMatch?.[1]) {
+      for (const m of whereArrMatch[1].matchAll(/["']([^"']+)["']/g)) {
         if (m[1]) addRoot(m[1]);
       }
+    } else {
+      const whereStrMatch = /where\s*=\s*["']([^"']+)["']/m.exec(raw);
+      if (whereStrMatch?.[1]) addRoot(whereStrMatch[1]);
     }
   }
 
@@ -47,7 +55,9 @@ export function resolvePythonRoots(params: {
   for (const iniName of ["pytest.ini", "setup.cfg"]) {
     const iniPath = path.join(wdAbs, iniName);
     if (!existsSync(iniPath)) continue;
-    const raw = readFileSync(iniPath, "utf8");
+    const raw = readFileSync(iniPath, "utf8")
+      .replace(/^\s*[#;][^\r\n]*$/gm, "")
+      .replace(/\s+[#;][^\r\n]*$/gm, "");
     const m = /^\s*pythonpath\s*=\s*(.+)$/m.exec(raw);
     if (m?.[1]) {
       for (const tok of m[1].trim().split(/[\s,]+/)) {
@@ -131,7 +141,10 @@ function detectJsCommonJsHintStyle(params: {
     /(?:^|[;\n])\s*export\s+(?:default\b|async\s+function\b|function\b|const\b|let\b|var\b|class\b|type\b|interface\b|enum\b|\{|\*)/.test(
       cleaned,
     );
-  const hasEsmImport = /(?:^|[;\n])\s*import\s+(?:[\w*{$\s,]+\s+from\s+|"")/.test(cleaned);
+  const hasEsmImport =
+    /(?:^|[;\n])\s*import\s+(?:""|\*(?:\s+as\s+[A-Za-z_$][\w$]*)?\s+from\s+""|[A-Za-z_$][\w$]*(?:\s*,\s*(?:\{[^}]{0,1000}\}|\*\s+as\s+[A-Za-z_$][\w$]*))?\s+from\s+""|\{[^}]{0,1000}\}\s+from\s+"")/.test(
+      cleaned,
+    );
   const hasCjsMarker = /\bmodule\.exports\b|\bexports\.[A-Za-z_$]|\bexports\s*\[|\brequire\s*\(/.test(cleaned);
 
   if (!isExplicitCjs && (hasEsmExport || (hasEsmImport && !hasCjsMarker) || !hasCjsMarker)) {
@@ -191,10 +204,16 @@ export function computeImportHint(params: {
       primaryClassName: params.primaryClassName,
     });
 
-    if (/\.(ts|tsx|mts|cts|jsx)$/i.test(rel)) {
-      rel = rel.replace(/\.(ts|tsx|mts|cts|jsx)$/i, appendJs ? ".js" : "");
+    if (/\.(ts|tsx|jsx)$/i.test(rel)) {
+      rel = rel.replace(/\.(ts|tsx|jsx)$/i, appendJs ? ".js" : "");
+    } else if (/\.mts$/i.test(rel)) {
+      rel = rel.replace(/\.mts$/i, appendJs ? ".mjs" : "");
+    } else if (/\.cts$/i.test(rel)) {
+      rel = rel.replace(/\.cts$/i, appendJs ? ".cjs" : "");
     } else if (/\.js$/i.test(rel) && (!appendJs || cjsHint !== null)) {
       rel = rel.replace(/\.js$/i, "");
+    } else if (/\.cjs$/i.test(rel) && cjsHint !== null) {
+      rel = rel.replace(/\.cjs$/i, "");
     }
 
     if (cjsHint?.kind === "default") {
@@ -220,9 +239,9 @@ export function computeImportHint(params: {
         break;
       }
     }
-    modPath = modPath.replace(/\.py$/i, "").replace(/\/__init__$/, "");
+    modPath = modPath.replace(/\.py$/i, "").replace(/(?:^|\/)__init__$/, "");
     const dotted = modPath.split("/").filter(Boolean).join(".");
-    return `from ${dotted} import ...`;
+    return dotted ? `from ${dotted} import ...` : "from . import ...";
   }
 
   // Java

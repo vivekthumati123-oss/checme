@@ -21,7 +21,7 @@ export interface BaselineLanguageState {
   status: "green" | "red" | "no_coverage";
   patchCoveragePct: number | null;
   detail?: string;
-  mismatchReason?: "toolchain_mismatch" | "unsupported_tool_version" | "wrapper_unavailable";
+  mismatchReason?: "tool_missing" | "toolchain_mismatch" | "unsupported_tool_version" | "wrapper_unavailable";
 }
 
 export interface BaselineArtifact {
@@ -137,9 +137,20 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
         continue;
       }
 
+      if (res.spawnError) {
+        perLanguage[lang] = {
+          status: "red",
+          patchCoveragePct: null,
+          detail: `Baseline command could not be launched: ${res.spawnError}`,
+          mismatchReason: "tool_missing",
+        };
+        opts.logger?.warn({ language: lang, spawnError: res.spawnError }, "Baseline command could not be launched");
+        continue;
+      }
+
       if (res.exitCode !== 0) {
         const combined = `${res.stdout}\n${res.stderr}`;
-        const mismatch = matchToolchainMismatch(combined);
+        const mismatch = matchToolchainMismatch(combined, lang);
         const tail = sanitizeLogTail(combined, { repoRoot: opts.repoRoot }, 40);
         const detail = mismatch
           ? `${mismatch.detail} — Incompatible toolchain/build-tool version. Select a compatible runtime toolchain or upgrade the wrapper. (${tail})`
@@ -220,6 +231,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
   if (opts.writeOutputs !== false) {
     writeGitHubOutput({
       baseline_status: artifact.status,
+      status: "ok",
     });
   }
 

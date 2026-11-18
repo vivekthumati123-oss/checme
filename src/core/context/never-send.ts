@@ -1,6 +1,6 @@
 import picomatch from "picomatch";
 
-import { normalizeSlashes } from "../paths";
+import { cleanRepoRelative, normalizeSlashes } from "../paths";
 
 export const DEFAULT_NEVER_SEND_GLOBS = [
   ".env",
@@ -12,10 +12,13 @@ export const DEFAULT_NEVER_SEND_GLOBS = [
   "**/*.p12",
   "**/*.pfx",
   "**/secrets/**",
+  "**/*secret*/**",
   "**/credentials*",
   "**/*credential*",
+  "**/*credential*/**",
   "**/*secret*",
   "**/*token*",
+  "**/*token*/**",
   "**/id_rsa*",
   "**/id_ed25519*",
   "**/.aws/**",
@@ -36,7 +39,8 @@ const CONTENT_SECRET_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }>
 ];
 
 export function matchesNeverSendPath(repoRelPath: string, extraGlobs: readonly string[] = []): boolean {
-  const norm = normalizeSlashes(repoRelPath).replace(/^\.\//, "");
+  const stripped = normalizeSlashes(repoRelPath).replace(/^\/+/, "");
+  const norm = cleanRepoRelative(stripped).replace(/^(?:\.\/|\/)+/, "");
   const patterns = [...DEFAULT_NEVER_SEND_GLOBS, ...extraGlobs];
   const matcher = picomatch(patterns, {
     dot: true,

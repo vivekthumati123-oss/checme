@@ -3,27 +3,47 @@ import path from "node:path";
 
 import { ARTIFACTS, SnapshotSchema, type Proposed, type Snapshot } from "../../contracts";
 import { sha256Hex } from "../../core/context";
-import { cleanRepoRelative, normalizeSlashes } from "../../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../../core/paths";
 
-export function writeValidationSnapshot(params: { workDir: string; attempt: 1 | 2; proposed: Proposed }): Snapshot {
+export function writeValidationSnapshot(params: {
+  workDir: string;
+  attempt: 1 | 2;
+  proposed: Proposed;
+  mergeExisting?: boolean;
+}): Snapshot {
   const dirKey = params.attempt === 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir;
-  const files = params.proposed.files
+  const outFile = path.join(params.workDir, dirKey, "snapshot.json");
+  const newFiles = params.proposed.files
     .filter((f) => f.status === "ok" && f.content.length > 0)
     .map((f) => ({
       fileId: f.fileId,
-      testPath: f.testPath,
-      sha256: /^[a-f0-9]{64}$/.test(f.sha256) ? f.sha256 : sha256Hex(f.content),
+      testPath: cleanRepoRelative(normalizeSlashes(f.testPath)),
+      sha256: sha256Hex(f.content),
       bytes: Buffer.byteLength(f.content, "utf8"),
     }));
+
+  const byPath = new Map<string, (typeof newFiles)[number]>();
+  if (params.mergeExisting && existsSync(outFile)) {
+    try {
+      const prev = SnapshotSchema.parse(JSON.parse(readFileSync(outFile, "utf8")));
+      for (const entry of prev.files) {
+        byPath.set(cleanRepoRelative(normalizeSlashes(entry.testPath)), entry);
+      }
+    } catch {
+      // ignore corrupted previous snapshot metadata
+    }
+  }
+  for (const f of newFiles) {
+    byPath.set(f.testPath, f);
+  }
 
   const snapshot = SnapshotSchema.parse({
     schemaVersion: 1,
     attempt: params.attempt,
     headSha: params.proposed.headSha,
-    files,
+    files: [...byPath.values()],
   });
 
-  const outFile = path.join(params.workDir, dirKey, "snapshot.json");
   mkdirSync(path.dirname(outFile), { recursive: true });
   writeFileSync(outFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
   return snapshot;
@@ -36,7 +56,16 @@ export function storeSnapshotValidatedContent(params: {
   content: string;
 }): string {
   const dirKey = params.attempt === 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir;
-  const snapFile = path.join(params.workDir, dirKey, "validated", params.testPath);
+  const normPath = cleanRepoRelative(normalizeSlashes(params.testPath));
+  if (
+    !normPath ||
+    normPath.split("/").includes("..") ||
+    path.posix.isAbsolute(normPath) ||
+    /^[A-Za-z]:/.test(normPath)
+  ) {
+    throw new Error(`Invalid snapshot testPath "${params.testPath}".`);
+  }
+  const snapFile = path.join(params.workDir, dirKey, "validated", normPath);
   mkdirSync(path.dirname(snapFile), { recursive: true });
   writeFileSync(snapFile, params.content, "utf8");
 
@@ -45,7 +74,6 @@ export function storeSnapshotValidatedContent(params: {
   if (existsSync(metaPath)) {
     try {
       const parsed = SnapshotSchema.parse(JSON.parse(readFileSync(metaPath, "utf8")));
-      const normPath = cleanRepoRelative(normalizeSlashes(params.testPath));
       const updated = SnapshotSchema.parse({
         ...parsed,
         files: parsed.files.map((entry) =>
@@ -75,12 +103,17 @@ export function listSnapshotFiles(rootDir: string): Set<string> {
       return;
     }
     for (const ent of entries) {
-      if (ent.name === ".git" || ent.name === "node_modules" || ent.name === ".unit-agent") continue;
+      if (ent.isSymbolicLink() || ent.name === ".git" || ent.name === "node_modules" || ent.name === ".unit-agent") {
+        continue;
+      }
       const full = path.join(cur, ent.name);
       if (ent.isDirectory()) {
         walk(full, depth + 1);
-      } else if (ent.isFile() && (ent.name.endsWith(".snap") || full.includes("__snapshots__"))) {
-        hits.add(cleanRepoRelative(normalizeSlashes(path.relative(rootDir, full))));
+      } else if (ent.isFile()) {
+        const rel = cleanRepoRelative(normalizeSlashes(path.relative(rootDir, full)));
+        if (ent.name.endsWith(".snap") || rel.split("/").includes("__snapshots__")) {
+          hits.add(rel);
+        }
       }
     }
   };
@@ -94,8 +127,10 @@ export function verifyWrittenTestSnapshot(params: {
   testPath: string;
   expectedSha256: string;
 }): boolean {
+  if (!isSafeRealPathInsideRoot(params.testPath, params.workspaceRoot, { requireRegularFileIfExists: true })) {
+    return false;
+  }
   const abs = path.join(params.workspaceRoot, params.testPath);
-  if (!existsSync(abs)) return false;
   const actual = sha256Hex(readFileSync(abs, "utf8"));
   return actual === params.expectedSha256;
 }

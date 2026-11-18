@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { loadConfig } from "../config";
 import { EXIT_CODES, StageError, type GitHubClientLike, type LoggerLike, type UnitAgentConfig } from "../contracts";
+import { runCommand } from "../exec/exec";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
 
 export type GuardSkipReason =
@@ -82,8 +83,6 @@ export const RUN_OPT_IN_LABEL = "unit-agent:run";
 export const SKIP_LABEL = "unit-agent:skip";
 
 export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
-  const loadedCfg = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
-
   let payload = opts.eventPayload;
   if (!payload) {
     const resolvedEventPath = opts.eventPath ?? process.env.GITHUB_EVENT_PATH;
@@ -99,11 +98,13 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
     payload = JSON.parse(raw) as PullRequestEventPayload;
   }
 
+  const defaultMode: "report" | "propose" = opts.config?.mode ?? "report";
+
   if (process.env.UNIT_AGENT_ENABLED?.trim().toLowerCase() === "false") {
     const result: GuardResult = {
       proceed: false,
       reason: "disabled",
-      mode: loadedCfg.mode,
+      mode: defaultMode,
       pr: payload.pull_request?.number ?? payload.number ?? 0,
       baseSha: payload.pull_request?.base?.sha ?? "",
       headSha: payload.pull_request?.head?.sha ?? "",
@@ -119,7 +120,7 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
     const result: GuardResult = {
       proceed: false,
       reason: "not_pull_request",
-      mode: loadedCfg.mode,
+      mode: defaultMode,
       pr: 0,
       baseSha: "",
       headSha: "",
@@ -147,14 +148,16 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
 
   if (opts.github && owner && repoName && prNum > 0) {
     const livePr = await opts.github.getPullRequest(owner, repoName, prNum);
-    headRepoFullName = livePr.headRepoFullName || headRepoFullName;
+    headRepoFullName = livePr.headRepoFullName;
     headSha = livePr.headSha || headSha;
     headRef = livePr.headRef || headRef;
     draft = livePr.draft;
     authorLogin = livePr.authorLogin || authorLogin;
     authorType = livePr.authorType || authorType;
-    labels = livePr.labels.length > 0 ? livePr.labels : labels;
-    headCommitMessage = headCommitMessage || livePr.headCommitMessage;
+    labels = livePr.labels;
+    if (!opts.headCommitMessage && livePr.headCommitMessage) {
+      headCommitMessage = livePr.headCommitMessage;
+    }
   }
 
   if (!baseSha || !headSha) {
@@ -167,9 +170,43 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
   }
 
   const baseRepoFullName = prObj.base?.repo?.full_name ?? repoFullName;
+  const isFork = !headRepoFullName || headRepoFullName !== baseRepoFullName;
+  if (isFork) {
+    const result: GuardResult = {
+      proceed: false,
+      reason: "fork_pr",
+      mode: defaultMode,
+      pr: prNum,
+      baseSha,
+      headSha,
+      headRef,
+      repoFullName,
+    };
+    opts.logger?.info({ proceed: false, reason: "fork_pr", pr: prNum }, "Guard blocked fork PR");
+    finalizeGuardOutputs(opts, result);
+    return result;
+  }
+
+  // Only load repo config after verifying the PR is enabled, non-fork, and not a fork checkout
+  const loadedCfg = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
+
+  if (!headCommitMessage && !headSha.startsWith("-") && opts.repoRoot && existsSync(opts.repoRoot)) {
+    try {
+      const logRes = await runCommand("git", ["log", "-1", "--format=%B", headSha], {
+        cwd: opts.repoRoot,
+        config: loadedCfg,
+        timeoutMs: 10_000,
+      });
+      if (logRes.exitCode === 0 && logRes.stdout.trim()) {
+        headCommitMessage = logRes.stdout.trim();
+      }
+    } catch {
+      // Best-effort offline commit message lookup
+    }
+  }
+
   const hasRunLabel = labels.includes(RUN_OPT_IN_LABEL);
   const hasSkipLabel = labels.includes(SKIP_LABEL);
-  const isFork = !headRepoFullName || headRepoFullName !== baseRepoFullName;
   const isBot = authorType === "Bot" || authorLogin.endsWith("[bot]");
   const msgLower = headCommitMessage.toLowerCase();
   const isLoop =
@@ -178,9 +215,7 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
   const hasSkipMsg = SKIP_COMMIT_MARKERS.some((marker) => msgLower.includes(marker));
 
   let reason: GuardSkipReason = "ok";
-  if (isFork) {
-    reason = "fork_pr";
-  } else if (isLoop) {
+  if (isLoop) {
     reason = "commit_loop";
   } else if (hasSkipLabel) {
     reason = "skip_label";

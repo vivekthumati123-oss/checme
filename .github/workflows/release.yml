@@ -62,4 +62,9 @@ jobs:
           name: unit-agent-cli-zip
           path: "unit-agent-cli-*.zip"
           retention-days: 30
+      - if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UA_TAG: ${{ github.ref_name }}
+        run: gh release create "$UA_TAG" "unit-agent-cli-${UA_TAG}.zip" --verify-tag --generate-notes
 

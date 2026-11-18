@@ -29,7 +29,7 @@ function extractJsImports(root: Parser.SyntaxNode): string[] {
   }
   for (const call of root.descendantsOfType("call_expression")) {
     const fn = call.childForFieldName("function");
-    if (fn?.text === "require") {
+    if (fn?.text === "require" || fn?.type === "import") {
       const args = call.childForFieldName("arguments");
       const firstArg = args?.namedChild(0);
       if (firstArg && (firstArg.type === "string" || firstArg.type === "template_string")) {
@@ -46,13 +46,14 @@ function collectReExportedNames(root: Parser.SyntaxNode): Set<string> {
   for (let i = 0; i < root.namedChildCount; i++) {
     const child = root.namedChild(i);
     if (!child || child.type !== "export_statement") continue;
+    if (child.childForFieldName("source")) continue;
     for (const clause of child.descendantsOfType("export_clause")) {
       for (const spec of clause.descendantsOfType("export_specifier")) {
         const localName = spec.childForFieldName("name")?.text;
         if (localName) exported.add(localName);
       }
     }
-    const defaultVal = child.childForFieldName("value");
+    const defaultVal = unwrapExpression(child.childForFieldName("value"));
     if (defaultVal?.type === "identifier") {
       exported.add(defaultVal.text);
     }
@@ -221,9 +222,10 @@ function hasChildToken(node: Parser.SyntaxNode, text: string): boolean {
   for (let i = 0; i < node.childCount; i++) {
     const c = node.child(i);
     if (!c) continue;
-    if (c.text === text) return true;
-    if (c.type === "accessibility_modifier" && c.text === text) return true;
     if (c.type === "override_modifier") continue;
+    if ((c.type === text || c.type === "accessibility_modifier" || !c.isNamed) && c.text === text) {
+      return true;
+    }
   }
   return false;
 }
@@ -368,7 +370,10 @@ export async function parseJavaScriptFile(params: {
     allSymbols.push(...extractClassMembers(classNode, className, exported, params.filePath, contentLines, isTestFile));
   };
 
-  const processDeclaration = (decl: Parser.SyntaxNode, explicitExported: boolean): void => {
+  const processDeclaration = (rawDecl: Parser.SyntaxNode, explicitExported: boolean): void => {
+    const decl = unwrapExpression(rawDecl);
+    if (!decl) return;
+
     if (decl.type === "function_declaration" || decl.type === "generator_function_declaration") {
       const name = decl.childForFieldName("name")?.text ?? "default";
       const bodyNode = decl.childForFieldName("body");
@@ -384,10 +389,10 @@ export async function parseJavaScriptFile(params: {
       return;
     }
 
-    if (decl.type === "arrow_function" || decl.type === "function_expression") {
+    if (decl.type === "arrow_function" || decl.type === "function_expression" || decl.type === "generator_function") {
       const bodyNode = decl.childForFieldName("body");
       pushFunctionSymbol({
-        qualifiedName: "default",
+        qualifiedName: decl.childForFieldName("name")?.text ?? "default",
         fnNode: decl,
         bodyNode,
         exported: explicitExported,
@@ -402,7 +407,7 @@ export async function parseJavaScriptFile(params: {
         const name = declarator.childForFieldName("name")?.text;
         const val = unwrapExpression(declarator.childForFieldName("value"));
         if (!name || !val) continue;
-        if (val.type === "arrow_function" || val.type === "function_expression") {
+        if (val.type === "arrow_function" || val.type === "function_expression" || val.type === "generator_function") {
           const bodyNode = val.childForFieldName("body");
           if (!bodyNode) continue;
           for (const entry of resolveSymbolExports(name, explicitExported)) {
@@ -423,7 +428,7 @@ export async function parseJavaScriptFile(params: {
       return;
     }
 
-    if (decl.type === "class_declaration" || decl.type === "abstract_class_declaration") {
+    if (decl.type === "class" || decl.type === "class_declaration" || decl.type === "abstract_class_declaration") {
       const className = decl.childForFieldName("name")?.text ?? "AnonymousClass";
       for (const entry of resolveSymbolExports(className, explicitExported)) {
         pushClassSymbols(decl, entry.name, entry.exported);

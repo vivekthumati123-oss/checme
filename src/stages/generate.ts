@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   ARTIFACTS,
+  AuthError,
   EXIT_CODES,
   FileContextSchema,
   ProposedSchema,
@@ -16,6 +17,7 @@ import {
   type UnitAgentConfig,
 } from "../contracts";
 import { sha256Hex } from "../core/context";
+import { isSafeRealPathInsideRoot } from "../core/paths";
 import { formatGeneratedTestContent } from "../core/text/eol";
 import { CopilotSdkTestClient, FakeLlmClient, type LlmTestClient } from "../llm";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
@@ -65,6 +67,14 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
   const proposedFiles: ProposedFile[] = [];
 
   for (const mf of manifest.files) {
+    if (!isSafeRealPathInsideRoot(mf.contextPath, prepareDir, { requireRegularFileIfExists: true })) {
+      throw new StageError(
+        `Unsafe context path "${mf.contextPath}" for fileId "${mf.fileId}".`,
+        EXIT_CODES.POLICY_OR_HASH,
+        "generate",
+        "path_violation",
+      );
+    }
     const ctxAbs = path.join(prepareDir, mf.contextPath);
     if (!existsSync(ctxAbs)) {
       throw new StageError(
@@ -101,18 +111,26 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
     let result;
 
     try {
-      requestsUsed += 1;
-      fileRequests += 1;
-      result = await client.generateTests({
+      const attemptRes = await client.generateTests({
         context: currentCtx,
         maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
         javaTestClassName: mf.testClassName,
         attempt: 1,
       });
+      requestsUsed += attemptRes.requestsUsed;
+      fileRequests += attemptRes.requestsUsed;
+      result = attemptRes;
     } catch (err) {
-      // F9: Retry once on output truncation with reduced symbol count (ceil(N/2))
-      if (err instanceof TruncatedOutputError && requestsUsed < maxRequests) {
-        const reducedCount = Math.max(1, Math.ceil(currentCtx.targets.length / 2));
+      if (err instanceof AuthError) {
+        throw err;
+      }
+      requestsUsed += 1;
+      fileRequests += 1;
+      const isTruncated = err instanceof TruncatedOutputError;
+      const isZod = err instanceof Error && err.name === "ZodError";
+      // F9: Retry once on output truncation or schema validation error with reduced symbol count (ceil(N/2))
+      if ((isTruncated || isZod) && requestsUsed < maxRequests) {
+        const reducedCount = currentCtx.targets.length > 1 ? Math.max(1, Math.ceil(currentCtx.targets.length / 2)) : 1;
         currentCtx = {
           ...currentCtx,
           targets: currentCtx.targets.slice(0, reducedCount),
@@ -121,19 +139,25 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
         };
         opts.logger?.warn(
           { fileId: mf.fileId, originalTargets: ctx.targets.length, reducedTargets: currentCtx.targets.length },
-          "Retrying generation after output truncation (F9)",
+          `Retrying generation after ${isTruncated ? "output truncation" : "schema validation error"} (F9)`,
         );
-        requestsUsed += 1;
-        fileRequests += 1;
         try {
-          result = await client.generateTests({
+          const retryRes = await client.generateTests({
             context: currentCtx,
             maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
             javaTestClassName: mf.testClassName,
             attempt: 2,
           });
+          requestsUsed += retryRes.requestsUsed;
+          fileRequests += retryRes.requestsUsed;
+          result = retryRes;
         } catch (retryErr) {
-          if (retryErr instanceof TruncatedOutputError) {
+          if (retryErr instanceof AuthError) {
+            throw retryErr;
+          }
+          requestsUsed += 1;
+          fileRequests += 1;
+          if (retryErr instanceof TruncatedOutputError || (retryErr instanceof Error && retryErr.name === "ZodError")) {
             proposedFiles.push({
               fileId: mf.fileId,
               testPath: mf.testPath,
@@ -141,7 +165,7 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
               sha256: "",
               symbolIds: currentCtx.targets.map((t) => t.symbolId),
               assumptions: [],
-              status: "truncated",
+              status: retryErr instanceof TruncatedOutputError ? "truncated" : "schema_invalid",
               error: retryErr.message,
               usage: {
                 requests: fileRequests,
@@ -154,7 +178,7 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
           }
           throw retryErr;
         }
-      } else if (err instanceof TruncatedOutputError) {
+      } else if (isTruncated) {
         proposedFiles.push({
           fileId: mf.fileId,
           testPath: mf.testPath,
@@ -164,9 +188,15 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
           assumptions: [],
           status: "truncated",
           error: err.message,
+          usage: {
+            requests: fileRequests,
+            inputChars: currentCtx.sourceFile.content.length,
+            outputChars: 0,
+            ms: Date.now() - startMs,
+          },
         });
         continue;
-      } else if (err instanceof Error && err.name === "ZodError") {
+      } else if (isZod) {
         proposedFiles.push({
           fileId: mf.fileId,
           testPath: mf.testPath,
@@ -175,7 +205,13 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
           symbolIds: currentCtx.targets.map((t) => t.symbolId),
           assumptions: [],
           status: "schema_invalid",
-          error: err.message,
+          error: (err as Error).message,
+          usage: {
+            requests: fileRequests,
+            inputChars: currentCtx.sourceFile.content.length,
+            outputChars: 0,
+            ms: Date.now() - startMs,
+          },
         });
         continue;
       } else {
@@ -184,7 +220,10 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
     }
 
     const sourceAbs = path.join(opts.repoRoot, mf.path);
-    const refSourceContent = existsSync(sourceAbs) ? readFileSync(sourceAbs, "utf8") : ctx.sourceFile.content;
+    const refSourceContent =
+      isSafeRealPathInsideRoot(mf.path, opts.repoRoot, { requireRegularFileIfExists: true }) && existsSync(sourceAbs)
+        ? readFileSync(sourceAbs, "utf8")
+        : ctx.sourceFile.content;
     const formattedContent = formatGeneratedTestContent({
       content: result.submission.content,
       language: mf.language,

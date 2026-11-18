@@ -26,7 +26,11 @@ function extractPythonImports(root: Parser.SyntaxNode): string[] {
       imports.add(modNode.text);
     } else {
       for (const nameNode of node.childrenForFieldName("name")) {
-        imports.add(nameNode.text);
+        const raw =
+          nameNode.type === "aliased_import"
+            ? (nameNode.childForFieldName("name")?.text ?? nameNode.text)
+            : nameNode.text;
+        if (raw) imports.add(raw);
       }
     }
   }
@@ -114,8 +118,9 @@ function buildPythonFunctionSymbol(params: {
   const complexity = computeCyclomaticComplexity(params.fnNode, bodyNode, PYTHON_COMPLEXITY_RULES);
 
   // Exclude leading triple-quoted docstring lines so docstring-only stubs do not look executable
-  const rawExecLines = estimateExecutableLines(params.contentLines, startLine + 1, endLine);
-  const docstringLines = countLeadingDocstringLines(bodyNode, params.contentLines, startLine + 1, endLine);
+  const bodyStartLine = bodyNode.startPosition.row + 1;
+  const rawExecLines = estimateExecutableLines(params.contentLines, bodyStartLine, endLine);
+  const docstringLines = countLeadingDocstringLines(bodyNode, params.contentLines, bodyStartLine, endLine);
   const execLines = Math.max(0, rawExecLines - docstringLines);
   const signature = extractSignatureFromNode(params.fnNode, bodyNode).replace(/:$/, "").trim();
 
@@ -180,42 +185,24 @@ export async function parsePythonFile(params: {
 }): Promise<FileParseResult> {
   const parser = await createTreeSitterParser("python", params.wasmDir);
   const tree = parser.parse(params.content);
-  const errorStats = computeErrorStats(tree);
+  let errorStats: ReturnType<typeof computeErrorStats>;
   const contentLines = params.content.split(/\r?\n/);
   const isTestFile = isTestFilePath(params.filePath);
   const isGeneratedFile = isGeneratedSourceContent(params.filePath, params.content);
   const allSymbols: ParsedSymbol[] = [];
   let primaryClassName: string | undefined;
+  let imports: string[];
 
-  const visitTopNode = (node: Parser.SyntaxNode, decorators: string[]): void => {
-    if (node.type === "decorated_definition") {
-      const innerDecorators = collectDecorators(node);
-      const def = node.childForFieldName("definition");
-      if (def) {
-        visitTopNode(def, innerDecorators);
-      }
-      return;
-    }
+  try {
+    errorStats = computeErrorStats(tree);
 
-    if (node.type === "function_definition") {
-      const sym = buildPythonFunctionSymbol({
-        filePath: params.filePath,
-        contentLines,
-        fnNode: node,
-        decorators,
-        classExported: true,
-        isTestFile,
-      });
-      if (sym) allSymbols.push(sym);
-      return;
-    }
-
-    if (node.type === "class_definition") {
-      const className = node.childForFieldName("name")?.text;
-      const body = node.childForFieldName("body");
+    const visitClassNode = (classNode: Parser.SyntaxNode, parentClass?: string, parentExported = true): void => {
+      const className = classNode.childForFieldName("name")?.text;
+      const body = classNode.childForFieldName("body");
       if (!className || !body) return;
-      const classExported = !isPrivatePythonName(className);
-      if (classExported && !primaryClassName) {
+      const fullClassName = parentClass ? `${parentClass}.${className}` : className;
+      const classExported = parentExported && !isPrivatePythonName(className);
+      if (classExported && !parentClass && !primaryClassName) {
         primaryClassName = className;
       }
 
@@ -231,11 +218,13 @@ export async function parsePythonFile(params: {
               contentLines,
               fnNode: def,
               decorators: memberDecorators,
-              className,
+              className: fullClassName,
               classExported,
               isTestFile,
             });
             if (sym) allSymbols.push(sym);
+          } else if (def?.type === "class_definition") {
+            visitClassNode(def, fullClassName, classExported);
           }
         } else if (member.type === "function_definition") {
           const sym = buildPythonFunctionSymbol({
@@ -243,28 +232,58 @@ export async function parsePythonFile(params: {
             contentLines,
             fnNode: member,
             decorators: [],
-            className,
+            className: fullClassName,
             classExported,
             isTestFile,
           });
           if (sym) allSymbols.push(sym);
+        } else if (member.type === "class_definition") {
+          visitClassNode(member, fullClassName, classExported);
         }
       }
+    };
+
+    const visitTopNode = (node: Parser.SyntaxNode, decorators: string[]): void => {
+      if (node.type === "decorated_definition") {
+        const innerDecorators = collectDecorators(node);
+        const def = node.childForFieldName("definition");
+        if (def) {
+          visitTopNode(def, innerDecorators);
+        }
+        return;
+      }
+
+      if (node.type === "function_definition") {
+        const sym = buildPythonFunctionSymbol({
+          filePath: params.filePath,
+          contentLines,
+          fnNode: node,
+          decorators,
+          classExported: true,
+          isTestFile,
+        });
+        if (sym) allSymbols.push(sym);
+        return;
+      }
+
+      if (node.type === "class_definition") {
+        visitClassNode(node);
+      }
+    };
+
+    for (let i = 0; i < tree.rootNode.namedChildCount; i++) {
+      const child = tree.rootNode.namedChild(i);
+      if (!child) continue;
+      visitTopNode(child, []);
     }
-  };
 
-  for (let i = 0; i < tree.rootNode.namedChildCount; i++) {
-    const child = tree.rootNode.namedChild(i);
-    if (!child) continue;
-    visitTopNode(child, []);
+    imports = extractPythonImports(tree.rootNode);
+  } finally {
+    tree.delete();
+    parser.delete();
   }
-
-  const imports = extractPythonImports(tree.rootNode);
   const eligibleSymbols =
     isTestFile || isGeneratedFile ? [] : filterEligibleSymbols(allSymbols, params.minExecutableLines ?? 2);
-
-  tree.delete();
-  parser.delete();
 
   return {
     language: "python",

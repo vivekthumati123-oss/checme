@@ -89,9 +89,16 @@ export async function runPytestSingleFile(req: RunnerRequest): Promise<RunnerOut
   const runArgs = [...args];
   if (runArgs.some((a) => /pytest/i.test(a)) || /pytest/i.test(file)) {
     runArgs.push(relTestPath, `--junitxml=${xmlOut}`);
-    if (req.withCoverage && !runArgs.some((a) => a.startsWith("--cov"))) {
-      const relCovOut = req.languageConfig.coverageFile;
-      runArgs.push("--cov=.", `--cov-report=xml:${relCovOut}`);
+    if (req.withCoverage) {
+      if (!runArgs.some((a) => a === "--cov" || a.startsWith("--cov="))) {
+        runArgs.push("--cov=.");
+      }
+      if (!runArgs.some((a) => a === "--cov-report" || a.startsWith("--cov-report="))) {
+        const relCovOut = fromRepoPath(req.languageConfig.coverageFile, req.languageConfig.workingDirectory);
+        runArgs.push(`--cov-report=xml:${relCovOut}`);
+      }
+    } else if (runArgs.some((a) => a === "--cov" || a.startsWith("--cov=")) && !runArgs.includes("--no-cov")) {
+      runArgs.push("--no-cov");
     }
   } else {
     runArgs.push(relTestPath);

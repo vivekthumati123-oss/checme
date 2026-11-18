@@ -14,7 +14,7 @@ import {
 import { hasProvenanceHeader } from "../config";
 import { sha256Hex } from "../core/context";
 import { checkCommitPath, safeHeredocDelimiter } from "../core/commit-paths";
-import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../core/paths";
 import { runStaticPolicyCheck } from "../core/policy";
 import {
   buildCommitBody,
@@ -24,6 +24,7 @@ import {
   DEFAULT_APPROVAL_ENVIRONMENT,
   inferLanguageForTestPath,
   isBranchProtectionOrPermissionError,
+  isStaleHeadCommitError,
   upsertUnitAgentComment,
   verifyRunApprovals,
 } from "../github";
@@ -140,6 +141,20 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
   }
 
   const [owner = "", repo = ""] = finalArtifact.repo.split("/");
+  const envRepo = process.env.GITHUB_REPOSITORY?.trim();
+  if (!owner || !repo || (envRepo && envRepo.toLowerCase() !== finalArtifact.repo.toLowerCase())) {
+    await abortCommitPolicyOrHash({
+      github: opts.github,
+      dryRun: opts.dryRun,
+      workDir: opts.workDir,
+      owner: owner || envRepo?.split("/")[0] || "",
+      repo: repo || envRepo?.split("/")[1] || "",
+      pr: finalArtifact.pr,
+      headSha: finalArtifact.headSha,
+      reason: "repo_mismatch",
+      message: `Commit aborted: \`final.json.repo\` (\`${sanitizeForMarkdown(finalArtifact.repo, 120)}\`) does not match repository context.`,
+    });
+  }
 
   if (finalArtifact.mode !== "propose" || finalArtifact.files.length === 0) {
     const reason = finalArtifact.mode !== "propose" ? "report_mode" : "no_files";
@@ -152,7 +167,7 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
 
   // 1a. Verify expected head matches finalArtifact.headSha -> exit 60
   if (finalArtifact.headSha !== opts.expectedHead) {
-    const msg = `Commit aborted: \`final.json.headSha\` (\`${finalArtifact.headSha}\`) does not match \`--expected-head\` (\`${opts.expectedHead}\`).`;
+    const msg = `Commit aborted: \`final.json.headSha\` (\`${sanitizeForMarkdown(finalArtifact.headSha, 80)}\`) does not match \`--expected-head\` (\`${sanitizeForMarkdown(opts.expectedHead, 80)}\`).`;
     await postCommitFailureOrStatusComment({
       github: opts.github,
       dryRun: opts.dryRun,
@@ -172,7 +187,9 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
   }
 
   // 1b. Re-verify SHA-256 and Gates 1-2 for every file from final/validated/
+  const validatedRoot = path.join(finalDir, "validated");
   const additions: Array<{ path: string; contentsBase64: string; rawContent: string }> = [];
+  const seenPaths = new Set<string>();
   for (const f of finalArtifact.files) {
     const normalizedPath = cleanRepoRelative(normalizeSlashes(f.path));
     if (
@@ -180,9 +197,10 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       normalizedPath.startsWith("..") ||
       path.isAbsolute(f.path) ||
       normalizedPath.startsWith(".git/") ||
-      normalizedPath.startsWith(".unit-agent/")
+      normalizedPath.startsWith(".unit-agent/") ||
+      seenPaths.has(normalizedPath.toLowerCase())
     ) {
-      const msg = `Commit aborted: unsafe test path \`${sanitizeForMarkdown(f.path, 160)}\` failed Gate 1.`;
+      const msg = `Commit aborted: unsafe or duplicate test path \`${sanitizeForMarkdown(f.path, 160)}\` failed Gate 1.`;
       await postCommitFailureOrStatusComment({
         github: opts.github,
         dryRun: opts.dryRun,
@@ -200,6 +218,7 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       });
       throw new StageError(msg, EXIT_CODES.POLICY_OR_HASH, "commit", "path_violation");
     }
+    seenPaths.add(normalizedPath.toLowerCase());
 
     const pathVerdict = checkCommitPath(normalizedPath);
     if (!pathVerdict.ok) {
@@ -216,7 +235,21 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       });
     }
 
-    const validatedFile = path.join(finalDir, "validated", normalizedPath);
+    if (!isSafeRealPathInsideRoot(normalizedPath, validatedRoot, { requireRegularFileIfExists: true })) {
+      await abortCommitPolicyOrHash({
+        github: opts.github,
+        dryRun: opts.dryRun,
+        workDir: opts.workDir,
+        owner,
+        repo,
+        pr: finalArtifact.pr,
+        headSha: finalArtifact.headSha,
+        reason: "path_violation",
+        message: `Commit aborted: validated snapshot path \`${sanitizeForMarkdown(normalizedPath, 160)}\` resolved via symlink or outside validated root.`,
+      });
+    }
+
+    const validatedFile = path.join(validatedRoot, normalizedPath);
     if (!existsSync(validatedFile)) {
       await abortCommitPolicyOrHash({
         github: opts.github,
@@ -303,8 +336,34 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
     return { committed: false, approvers: [], fallbackPatchPosted: false, reason: "dry_run" };
   }
 
-  // 2. Live PR head staleness check -> exit 50
+  // 2. Live PR head staleness & same-repo checks
   const prInfo = await opts.github.getPullRequest(owner, repo, finalArtifact.pr);
+  if (!prInfo.headRepoFullName || prInfo.headRepoFullName !== prInfo.baseRepoFullName) {
+    await abortCommitPolicyOrHash({
+      github: opts.github,
+      dryRun: opts.dryRun,
+      workDir: opts.workDir,
+      owner,
+      repo,
+      pr: finalArtifact.pr,
+      headSha: finalArtifact.headSha,
+      reason: "fork_pr",
+      message: "Commit aborted: pull request originates from a fork or deleted repository.",
+    });
+  }
+  if (prInfo.draft && !prInfo.labels.includes("unit-agent:run")) {
+    await abortCommitPolicyOrHash({
+      github: opts.github,
+      dryRun: opts.dryRun,
+      workDir: opts.workDir,
+      owner,
+      repo,
+      pr: finalArtifact.pr,
+      headSha: finalArtifact.headSha,
+      reason: "draft_pr",
+      message: "Commit aborted: pull request is now a draft without `unit-agent:run` opt-in.",
+    });
+  }
   if (prInfo.headSha !== opts.expectedHead) {
     const staleMsg = "PR changed after the tests were generated; push triggered a new run.";
     await postCommitFailureOrStatusComment({
@@ -407,15 +466,32 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
     opts.logger?.info({ commitSha: oid, approversCount: approvers.length }, "Committed generated unit tests.");
     return { committed: true, commitSha: oid, approvers, fallbackPatchPosted: false, reason: "committed" };
   } catch (err) {
+    if (isStaleHeadCommitError(err)) {
+      const staleMsg = "PR changed after the tests were generated; push triggered a new run.";
+      await postCommitFailureOrStatusComment({
+        github: opts.github,
+        dryRun: opts.dryRun,
+        owner,
+        repo,
+        pr: finalArtifact.pr,
+        headSha: finalArtifact.headSha,
+        message: staleMsg,
+      });
+      writeStageStatus(opts.workDir, {
+        stage: "commit",
+        status: "soft_fail",
+        code: EXIT_CODES.STALE_HEAD_OR_SOURCE,
+        reason: "stale_head",
+      });
+      throw new StageError(staleMsg, EXIT_CODES.STALE_HEAD_OR_SOURCE, "commit", "stale_head");
+    }
+
     if (!isBranchProtectionOrPermissionError(err)) {
       throw err;
     }
 
-    // 5. Branch protection / permission fallback: post patch.diff cleanly and exit 0
-    const patchPath = path.join(finalDir, "patch.diff");
-    const patchDiff = existsSync(patchPath)
-      ? readFileSync(patchPath, "utf8")
-      : buildUnifiedNewFilePatch(additions.map((a) => ({ path: a.path, content: a.rawContent })));
+    // 5. Branch protection / permission fallback: build patch deterministically from verified additions
+    const patchDiff = buildUnifiedNewFilePatch(additions.map((a) => ({ path: a.path, content: a.rawContent })));
 
     const delim = safeHeredocDelimiter(patchDiff);
     const fallbackMsg = [

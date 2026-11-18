@@ -638,7 +638,7 @@ describe("calc", () => {
     expect(init1.doctor.ok).toBe(true);
     const agentPath = path.join(repo, ".github", "agents", "unit-agent.agent.md");
     const agentBody = readFileSync(agentPath, "utf8");
-    expect(agentBody).toContain(extractTestRulesBlock().replaceAll("{{maxTestsPerSymbol}}", "8"));
+    expect(agentBody).toContain(extractTestRulesBlock().replaceAll("{{maxTestsPerSymbol}}", "6"));
     expect(agentBody).toMatch(/^---\r?\nname: unit-agent\r?\ndescription: '/);
     expect(agentBody).not.toContain("\nmodel:");
 

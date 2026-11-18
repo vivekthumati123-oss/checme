@@ -2,7 +2,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { FrameworkName, LanguageConfig, LanguageKey } from "../../contracts";
-import { cleanRepoRelative, normalizeSlashes } from "../paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../paths";
+import { checkNeverSend, matchesNeverSendPath } from "./never-send";
 
 export interface DetectedConventions {
   framework: FrameworkName;
@@ -103,9 +104,11 @@ export function detectFrameworkForLanguage(params: {
   const configured = params.langConfig.framework;
 
   if (params.language === "javascript") {
-    const pkg = readPackageJson(wdAbs) ?? readPackageJson(params.repoRoot);
-    const vitestVer = getDepVersion(pkg, "vitest");
-    const jestVer = getDepVersion(pkg, "jest");
+    const wdPkg = readPackageJson(wdAbs);
+    const rootPkg = path.resolve(wdAbs) === path.resolve(params.repoRoot) ? null : readPackageJson(params.repoRoot);
+    const getPkgDep = (dep: string): string | null => getDepVersion(wdPkg, dep) ?? getDepVersion(rootPkg, dep);
+    const vitestVer = getPkgDep("vitest");
+    const jestVer = getPkgDep("jest");
 
     const hasVitestConfig =
       Boolean(vitestVer) ||
@@ -130,7 +133,7 @@ export function detectFrameworkForLanguage(params: {
       resolved = "jest";
     } else {
       for (const fwName of ["mocha", "jasmine", "ava", "tap", "karma"] as const) {
-        const depVer = getDepVersion(pkg, fwName);
+        const depVer = getPkgDep(fwName);
         if (depVer || new RegExp(`\\b${fwName}\\b`, "i").test(params.langConfig.testCommand)) {
           unsupportedFramework = {
             name: fwName,
@@ -211,20 +214,34 @@ function isSampleTestFileForLanguage(relPath: string, language: LanguageKey): bo
   return /(?:Tests?|IT)\.java$/.test(relPath);
 }
 
+const IGNORED_SAMPLE_DIRS = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "target",
+  "build",
+  ".gradle",
+  ".venv",
+  "venv",
+  "__pycache__",
+]);
+
 export function findClosestStyleSample(params: {
   repoRoot: string;
   workingDirectory: string;
   language: LanguageKey;
   sourcePath: string;
+  neverSendGlobs?: readonly string[];
   maxChars?: number;
 }): { path: string; content: string } | undefined {
   const maxChars = params.maxChars ?? 2500;
   const wdAbs = path.resolve(params.repoRoot, params.workingDirectory || ".");
   if (!existsSync(wdAbs)) return undefined;
 
+  const neverSendGlobs = params.neverSendGlobs ?? [];
   const candidates: string[] = [];
   const walk = (dirAbs: string, depth: number): void => {
-    if (depth > 5 || candidates.length >= 25) return;
+    if (depth > 12 || candidates.length >= 25) return;
     let entries;
     try {
       entries = readdirSync(dirAbs, { withFileTypes: true });
@@ -232,7 +249,7 @@ export function findClosestStyleSample(params: {
       return;
     }
     for (const ent of entries) {
-      if (ent.name === "node_modules" || ent.name === ".git" || ent.name === "dist" || ent.name === "target") {
+      if (ent.isSymbolicLink() || IGNORED_SAMPLE_DIRS.has(ent.name)) {
         continue;
       }
       const full = path.join(dirAbs, ent.name);
@@ -240,7 +257,7 @@ export function findClosestStyleSample(params: {
         walk(full, depth + 1);
       } else if (ent.isFile()) {
         const rel = cleanRepoRelative(normalizeSlashes(path.relative(params.repoRoot, full)));
-        if (isSampleTestFileForLanguage(rel, params.language)) {
+        if (!matchesNeverSendPath(rel, neverSendGlobs) && isSampleTestFileForLanguage(rel, params.language)) {
           candidates.push(rel);
         }
       }
@@ -259,9 +276,12 @@ export function findClosestStyleSample(params: {
   });
 
   for (const cand of candidates) {
+    if (!isSafeRealPathInsideRoot(cand, params.repoRoot, { requireRegularFileIfExists: true })) {
+      continue;
+    }
     try {
       const content = readFileSync(path.join(params.repoRoot, cand), "utf8");
-      if (!content.trim()) continue;
+      if (!content.trim() || checkNeverSend(cand, content, neverSendGlobs).blocked) continue;
       return {
         path: cand,
         content: content.length > maxChars ? `${content.slice(0, maxChars)}\n// ...truncated` : content,
@@ -279,6 +299,7 @@ export function detectProjectConventions(params: {
   langConfig: LanguageConfig;
   repoRoot: string;
   sourcePath: string;
+  neverSendGlobs?: readonly string[];
 }): DetectedConventions {
   const fw = detectFrameworkForLanguage({
     language: params.language,
@@ -305,6 +326,7 @@ export function detectProjectConventions(params: {
     workingDirectory: params.langConfig.workingDirectory,
     language: params.language,
     sourcePath: params.sourcePath,
+    neverSendGlobs: params.neverSendGlobs,
   });
 
   return {

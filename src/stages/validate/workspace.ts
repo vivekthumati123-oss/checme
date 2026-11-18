@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { EXIT_CODES, StageError, type UnitAgentConfig } from "../../contracts";
-import { cleanRepoRelative, normalizeSlashes } from "../../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../../core/paths";
 
 export interface ValidationWorkspace {
   root: string;
@@ -72,16 +72,18 @@ function copyFilteredTree(srcRoot: string, destRoot: string): void {
     mkdirSync(destCur, { recursive: true });
     const entries = readdirSync(srcCur, { withFileTypes: true });
     for (const ent of entries) {
+      if (ent.isSymbolicLink()) continue;
       if (!LINK_COPY_DIRS.has(ent.name) && SKIP_COPY_DIRS.has(ent.name)) continue;
       const srcPath = path.join(srcCur, ent.name);
       const destPath = path.join(destCur, ent.name);
 
       if (LINK_COPY_DIRS.has(ent.name)) {
-        linkDirs.push(cleanRepoRelative(normalizeSlashes(path.relative(srcRoot, srcPath))));
+        if (ent.isDirectory()) {
+          linkDirs.push(cleanRepoRelative(normalizeSlashes(path.relative(srcRoot, srcPath))));
+        }
         continue;
       }
 
-      if (ent.isSymbolicLink()) continue;
       if (ent.isDirectory()) {
         copyRec(srcPath, destPath);
       } else if (ent.isFile()) {
@@ -94,10 +96,13 @@ function copyFilteredTree(srcRoot: string, destRoot: string): void {
 
   const linkType: "junction" | "dir" = process.platform === "win32" ? "junction" : "dir";
   for (const rel of linkDirs) {
+    if (!rel || !isSafeRealPathInsideRoot(rel, srcRoot)) continue;
     const srcTarget = path.join(srcRoot, rel);
     const destLink = path.join(destRoot, rel);
     if (!existsSync(srcTarget)) continue;
     try {
+      const st = lstatSync(srcTarget);
+      if (st.isSymbolicLink() || !st.isDirectory()) continue;
       if (existsSync(destLink)) {
         lstatSync(destLink);
         continue;

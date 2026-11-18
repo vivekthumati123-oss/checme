@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema } from "../../src/contracts";
+import { ConfigSchema, type GitHubClientLike } from "../../src/contracts";
 import { runGuard, type PullRequestEventPayload } from "../../src/stages/guard";
 
 const tempDirs: string[] = [];
@@ -196,5 +196,76 @@ describe("guard stage", () => {
       if (prev === undefined) delete process.env.UNIT_AGENT_ENABLED;
       else process.env.UNIT_AGENT_ENABLED = prev;
     }
+  });
+
+  it("replaces stale payload labels with live labels, blocks deleted forks, and skips invalid configs on fork PRs", async () => {
+    const dir = makeTempDir();
+    writeFileSync(path.join(dir, ".unit-agent.yml"), "not: [valid: yaml", "utf8");
+
+    const forkRes = await runGuard({
+      repoRoot: dir,
+      workDir: path.join(dir, ".unit-agent"),
+      eventPayload: baseEvent({
+        head: { sha: "h1", ref: "patch-1", repo: { full_name: "evil-fork/app" } },
+      }),
+      writeOutputs: false,
+    });
+    expect(forkRes.proceed).toBe(false);
+    expect(forkRes.reason).toBe("fork_pr");
+
+    const fakeGithub: GitHubClientLike = {
+      getPullRequest: async () => ({
+        headSha: "head123",
+        headRef: "feat/pay",
+        headRepoFullName: "", // Deleted fork repo
+        baseRepoFullName: "acme/app",
+        draft: false,
+        authorLogin: "alice",
+        authorType: "User",
+        labels: [],
+        headCommitMessage: "feat",
+      }),
+      listIssueComments: async () => [],
+      createIssueComment: async () => ({ id: 1 }),
+      updateIssueComment: async () => {},
+      getEnvironment: async () => ({ exists: false, status: 404, hasRequiredReviewers: false }),
+      getRunApprovals: async () => [],
+      createCommitOnBranch: async () => ({ oid: "x" }),
+    };
+
+    const deletedFork = await runGuard({
+      repoRoot: dir,
+      workDir: path.join(dir, ".unit-agent"),
+      github: fakeGithub,
+      eventPayload: baseEvent({ labels: [{ name: "unit-agent:skip" }] }),
+      writeOutputs: false,
+    });
+    expect(deletedFork.proceed).toBe(false);
+    expect(deletedFork.reason).toBe("fork_pr");
+
+    // Live empty labels override stale payload skip label for same-repo PR
+    const liveOkGithub: GitHubClientLike = {
+      ...fakeGithub,
+      getPullRequest: async () => ({
+        headSha: "head123",
+        headRef: "feat/pay",
+        headRepoFullName: "acme/app",
+        baseRepoFullName: "acme/app",
+        draft: false,
+        authorLogin: "alice",
+        authorType: "User",
+        labels: [],
+        headCommitMessage: "feat",
+      }),
+    };
+    const clearedLabelRes = await runGuard({
+      repoRoot: dir,
+      workDir: path.join(dir, ".unit-agent"),
+      config: VALID_CFG,
+      github: liveOkGithub,
+      eventPayload: baseEvent({ labels: [{ name: "unit-agent:skip" }] }),
+      writeOutputs: false,
+    });
+    expect(clearedLabelRes.proceed).toBe(true);
   });
 });

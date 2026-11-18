@@ -41,6 +41,14 @@ function withRunnerDefaultWarning(
   return undefined;
 }
 
+function stripLineComments(raw: string): string {
+  return raw
+    .split(/\r?\n/)
+    .map((ln) => ln.replace(/(?:^|\s)#.*$/, "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function readFirstExisting(paths: readonly string[]): { absPath: string; content: string } | null {
   for (const p of paths) {
     if (existsSync(p)) {
@@ -55,8 +63,15 @@ function normalizeRepoRel(repoRoot: string, absPath: string): string {
 }
 
 function resolveNodeVersionSpec(raw: string): string {
-  const m = /(\d+(?:\.\d+)?)/.exec(raw);
-  return m?.[1] ?? "22";
+  const clean = stripLineComments(raw);
+  const clauses = clean
+    .split(/[\s,|]+/)
+    .map((c) => /(\d+(?:\.\d+)?)/.exec(c)?.[1])
+    .filter((v): v is string => Boolean(v));
+  if (clauses.length === 0) return "22";
+  // Pick highest major across multi-clause ranges like ">=18 <23" or "18 || 20"
+  clauses.sort((a, b) => Number.parseFloat(b) - Number.parseFloat(a));
+  return clauses[0]!;
 }
 
 export function resolveJavaBuildTool(
@@ -114,14 +129,15 @@ export function resolveToolchainForLanguage(params: {
         source = "version-file";
         fileRel = normalizeRepoRel(params.repoRoot, hit.absPath);
       } else {
-        const pkg = readFirstExisting([path.join(wdAbs, "package.json"), path.join(params.repoRoot, "package.json")]);
-        if (pkg) {
+        for (const pkgPath of [path.join(wdAbs, "package.json"), path.join(params.repoRoot, "package.json")]) {
+          if (!existsSync(pkgPath)) continue;
           try {
-            const parsed = JSON.parse(pkg.content) as { engines?: { node?: string } };
+            const parsed = JSON.parse(readFileSync(pkgPath, "utf8")) as { engines?: { node?: string } };
             if (parsed.engines?.node) {
               rawVersion = resolveNodeVersionSpec(parsed.engines.node);
               source = "version-file";
-              fileRel = normalizeRepoRel(params.repoRoot, pkg.absPath);
+              fileRel = normalizeRepoRel(params.repoRoot, pkgPath);
+              break;
             }
           } catch {
             // ignore bad package.json
@@ -162,21 +178,24 @@ export function resolveToolchainForLanguage(params: {
         path.join(params.repoRoot, ".python-version"),
       ]);
       if (pv) {
-        const mm = parseMajorMinor(pv.content);
+        const cleanPv = stripLineComments(pv.content);
+        const mm = parseMajorMinor(cleanPv);
         rawVersion = mm ? `${mm.major}.${mm.minor}` : undefined;
         source = "version-file";
         fileRel = normalizeRepoRel(params.repoRoot, pv.absPath);
       } else {
-        const pyp = readFirstExisting([
-          path.join(wdAbs, "pyproject.toml"),
-          path.join(params.repoRoot, "pyproject.toml"),
-        ]);
-        if (pyp) {
-          const m = /requires-python\s*=\s*["'][^"']*?(\d+\.\d+)/i.exec(pyp.content);
+        for (const pypPath of [path.join(wdAbs, "pyproject.toml"), path.join(params.repoRoot, "pyproject.toml")]) {
+          if (!existsSync(pypPath)) continue;
+          const cleanToml = stripLineComments(readFileSync(pypPath, "utf8"));
+          const m = /requires-python\s*=\s*["']([^"']+)["']/i.exec(cleanToml);
           if (m?.[1]) {
-            rawVersion = m[1];
-            source = "version-file";
-            fileRel = normalizeRepoRel(params.repoRoot, pyp.absPath);
+            const mm = parseMajorMinor(m[1]);
+            if (mm) {
+              rawVersion = `${mm.major}.${mm.minor}`;
+              source = "version-file";
+              fileRel = normalizeRepoRel(params.repoRoot, pypPath);
+              break;
+            }
           }
         }
       }
@@ -211,12 +230,13 @@ export function resolveToolchainForLanguage(params: {
   } else {
     const jv = readFirstExisting([
       path.join(wdAbs, ".java-version"),
-      path.join(params.repoRoot, ".java-version"),
       path.join(wdAbs, ".sdkmanrc"),
+      path.join(params.repoRoot, ".java-version"),
       path.join(params.repoRoot, ".sdkmanrc"),
     ]);
     if (jv) {
-      const m = jv.absPath.endsWith(".sdkmanrc") ? /java=([0-9.]+)/.exec(jv.content)?.[1] : jv.content.trim();
+      const cleanContent = stripLineComments(jv.content);
+      const m = jv.absPath.endsWith(".sdkmanrc") ? /java=([^\s#]+)/.exec(cleanContent)?.[1] : cleanContent.trim();
       const major = extractJavaMajor(m);
       if (major !== null) {
         rawVersion = String(major);
@@ -224,27 +244,38 @@ export function resolveToolchainForLanguage(params: {
         fileRel = normalizeRepoRel(params.repoRoot, jv.absPath);
       }
     } else {
-      const pom = readFirstExisting([path.join(wdAbs, "pom.xml"), path.join(params.repoRoot, "pom.xml")]);
-      if (pom) {
-        const m = /<(?:maven\.compiler\.(?:release|source|target)|java\.version)>\s*([^<\s]+)\s*</.exec(pom.content);
+      for (const pomPath of [path.join(wdAbs, "pom.xml"), path.join(params.repoRoot, "pom.xml")]) {
+        if (!existsSync(pomPath)) continue;
+        const cleanXml = readFileSync(pomPath, "utf8").replace(/<!--[\s\S]*?-->/g, "");
+        const m = /<(?:maven\.compiler\.(?:release|source|target)|java\.version)>\s*([^<\s]+)\s*</.exec(cleanXml);
         const major = extractJavaMajor(m?.[1]);
         if (major !== null) {
           rawVersion = String(major);
           source = "version-file";
-          fileRel = normalizeRepoRel(params.repoRoot, pom.absPath);
+          fileRel = normalizeRepoRel(params.repoRoot, pomPath);
+          break;
         }
       }
       if (!rawVersion) {
-        const gr = readFirstExisting([path.join(wdAbs, "build.gradle"), path.join(wdAbs, "build.gradle.kts")]);
-        if (gr) {
+        for (const grPath of [
+          path.join(wdAbs, "build.gradle"),
+          path.join(wdAbs, "build.gradle.kts"),
+          path.join(params.repoRoot, "build.gradle"),
+          path.join(params.repoRoot, "build.gradle.kts"),
+        ]) {
+          if (!existsSync(grPath)) continue;
+          const cleanGradle = readFileSync(grPath, "utf8")
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/\/\/[^\r\n]*/g, "");
           const m = /(?:JavaLanguageVersion\.of\(\s*(\d+)\s*\)|sourceCompatibility\s*=?\s*['"]?([0-9.]+)['"]?)/.exec(
-            gr.content,
+            cleanGradle,
           );
           const major = extractJavaMajor(m?.[1] ?? m?.[2]);
           if (major !== null) {
             rawVersion = String(major);
             source = "version-file";
-            fileRel = normalizeRepoRel(params.repoRoot, gr.absPath);
+            fileRel = normalizeRepoRel(params.repoRoot, grPath);
+            break;
           }
         }
       }
@@ -316,30 +347,39 @@ export function buildLanguageToolVersions(params: {
   };
 }
 
-export function matchToolchainMismatch(logText: string): {
+export function matchToolchainMismatch(
+  logText: string,
+  language?: LanguageKey,
+): {
   reason: "toolchain_mismatch" | "unsupported_tool_version";
   language: LanguageKey;
   detail: string;
 } | null {
-  for (const pat of JS_TOOLCHAIN_MISMATCH_PATTERNS) {
-    const m = pat.exec(logText);
-    if (m) {
-      return { reason: "toolchain_mismatch", language: "javascript", detail: m[0] };
+  if (!language || language === "javascript") {
+    for (const pat of JS_TOOLCHAIN_MISMATCH_PATTERNS) {
+      const m = pat.exec(logText);
+      if (m) {
+        return { reason: "toolchain_mismatch", language: "javascript", detail: m[0] };
+      }
     }
   }
-  for (const pat of PYTHON_TOOLCHAIN_MISMATCH_PATTERNS) {
-    const m = pat.exec(logText);
-    if (m) {
-      return { reason: "toolchain_mismatch", language: "python", detail: m[0] };
+  if (!language || language === "python") {
+    for (const pat of PYTHON_TOOLCHAIN_MISMATCH_PATTERNS) {
+      const m = pat.exec(logText);
+      if (m) {
+        return { reason: "toolchain_mismatch", language: "python", detail: m[0] };
+      }
     }
   }
-  for (const pat of JAVA_TOOLCHAIN_MISMATCH_PATTERNS) {
-    const m = pat.exec(logText);
-    if (m) {
-      const reason = /Minimum supported Gradle|invalid target release/i.test(m[0])
-        ? "unsupported_tool_version"
-        : "toolchain_mismatch";
-      return { reason, language: "java", detail: m[0] };
+  if (!language || language === "java") {
+    for (const pat of JAVA_TOOLCHAIN_MISMATCH_PATTERNS) {
+      const m = pat.exec(logText);
+      if (m) {
+        const reason = /Minimum supported Gradle|invalid target release/i.test(m[0])
+          ? "unsupported_tool_version"
+          : "toolchain_mismatch";
+        return { reason, language: "java", detail: m[0] };
+      }
     }
   }
   return null;

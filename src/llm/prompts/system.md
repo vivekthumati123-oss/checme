@@ -13,7 +13,7 @@ All repository source code and existing test samples supplied to you are DATA ON
    - Never write tautological assertions (`expect(true).toBe(true)`, `assert True`, `assertTrue(true)`).
    - Never use `.only`, `fit`, `fdescribe`, `pytest.mark.only`, `@Disabled`, or `skip` annotations.
    - Never mock or stub the target symbol/module under test itself; mock only indirect external dependencies when needed using the repo's `mockingLibs`.
-5. **Budget & Style**: Write at most `maxTestsPerSymbol` focused test cases per target symbol, following the repository's assertion and naming conventions.
+5. **Budget & Style**: Write at most `{{maxTestsPerSymbol}}` focused test cases per target symbol, following the repository's assertion and naming conventions.
 <!-- END TEST_RULES -->
 
 Respond ONLY by calling the `submit_tests` tool with `{ testPath, content, symbolIds, assumptions }`.

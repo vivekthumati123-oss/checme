@@ -32,7 +32,7 @@ export function stripTerminalEscapesAndControls(input: string): string {
 }
 
 export const SECRET_ENV_KEY_RE =
-  /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE|(?:^|_)(?:AUTH|PAT|COOKIE)(?:$|_)|(?:^|_)KEY(?:$|_))/i;
+  /(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|API_?KEY|ACCESS_?KEY_?ID|PRIVATE|(?:^|_)(?:AUTH|PAT|COOKIE)(?:$|_)|(?:^|_)KEY(?:$|_))/i;
 
 export const EXPLICIT_FORBIDDEN_ENV_KEYS = new Set([
   "COPILOT_GITHUB_TOKEN",
@@ -41,19 +41,31 @@ export const EXPLICIT_FORBIDDEN_ENV_KEYS = new Set([
   "COMMIT_PAT",
 ]);
 
-const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
-  /Bearer\s+[A-Za-z0-9._-]{20,}/g,
-  /AccountKey=[A-Za-z0-9+/=]{20,}/g,
-  /\bATATT3[A-Za-z0-9_\-=]{20,}/g,
+const EXPLICIT_FORBIDDEN_UPPER = new Set([...EXPLICIT_FORBIDDEN_ENV_KEYS].map((k) => k.toUpperCase()));
+
+interface SecretPatternRule {
+  pattern: RegExp;
+  replacement: string;
+}
+
+const SECRET_VALUE_PATTERNS: readonly SecretPatternRule[] = [
+  { pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, replacement: "[REDACTED]" },
+  { pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, replacement: "[REDACTED]" },
+  {
+    pattern:
+      /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g,
+    replacement: "[REDACTED]",
+  },
+  { pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g, replacement: "[REDACTED]" },
+  { pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, replacement: "[REDACTED]" },
+  { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, replacement: "[REDACTED]" },
+  { pattern: /\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{12,}\b/gi, replacement: "$1$2[REDACTED]" },
+  { pattern: /((?:https?|ssh|ftp):\/\/[^:\s/@]+:)([^@\s]+)(@)/gi, replacement: "$1[REDACTED]$3" },
+  { pattern: /AccountKey=[A-Za-z0-9+/=]{20,}/g, replacement: "[REDACTED]" },
+  { pattern: /\bATATT3[A-Za-z0-9_\-=]{20,}/g, replacement: "[REDACTED]" },
 ];
 
-const ENV_LINE_RE = /^[A-Z_][A-Z0-9_]{2,}=.+$/gm;
+const ENV_LINE_RE = /^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]{2,}=.+$/gm;
 
 export interface SanitizeOptions {
   repoRoot?: string;
@@ -85,9 +97,11 @@ function replacePathVariants(text: string, rawPath: string | undefined, placehol
 export function collectSensitiveEnvValues(env: Record<string, string | undefined> = process.env): string[] {
   const values = new Set<string>();
   for (const [key, val] of Object.entries(env)) {
-    if (!val || val.length < 6) continue;
-    if (EXPLICIT_FORBIDDEN_ENV_KEYS.has(key) || SECRET_ENV_KEY_RE.test(key)) {
-      values.add(val);
+    if (!val || val.trim().length < 6) continue;
+    if (EXPLICIT_FORBIDDEN_UPPER.has(key.toUpperCase()) || SECRET_ENV_KEY_RE.test(key)) {
+      if (val.length >= 6) values.add(val);
+      const trimmed = val.trim();
+      if (trimmed.length >= 6) values.add(trimmed);
     }
   }
   return [...values].sort((a, b) => b.length - a.length);
@@ -96,11 +110,20 @@ export function collectSensitiveEnvValues(env: Record<string, string | undefined
 export function sanitizeOutput(input: string, opts: SanitizeOptions = {}): string {
   let out = stripTerminalEscapesAndControls(input);
 
-  // Replace known runner / checkout / workspace / home / tmp directories first (longest match priority).
-  out = replacePathVariants(out, opts.workspaceRoot, "<WORKSPACE>");
-  out = replacePathVariants(out, opts.repoRoot, "<REPO>");
-  out = replacePathVariants(out, opts.homeDir ?? os.homedir(), "<HOME>");
-  out = replacePathVariants(out, opts.tmpDir ?? os.tmpdir(), "<TMP>");
+  // Replace known runner / checkout / workspace / home / tmp directories (longest match first).
+  const pathReplacements: Array<{ raw: string | undefined; placeholder: string; order: number; normLen: number }> = [
+    { raw: opts.workspaceRoot, placeholder: "<WORKSPACE>", order: 0, normLen: 0 },
+    { raw: opts.repoRoot, placeholder: "<REPO>", order: 1, normLen: 0 },
+    { raw: opts.homeDir ?? os.homedir(), placeholder: "<HOME>", order: 2, normLen: 0 },
+    { raw: opts.tmpDir ?? os.tmpdir(), placeholder: "<TMP>", order: 3, normLen: 0 },
+  ].map((entry) => ({
+    ...entry,
+    normLen: entry.raw ? entry.raw.replace(/[/\\]+$/, "").length : 0,
+  }));
+  pathReplacements.sort((a, b) => b.normLen - a.normLen || a.order - b.order);
+  for (const entry of pathReplacements) {
+    out = replacePathVariants(out, entry.raw, entry.placeholder);
+  }
 
   // Replace generic user home directories in paths we might not have explicitly named.
   out = out.replace(/[A-Za-z]:\\Users\\[^\\\s"'`]+/gi, "<HOME>");
@@ -115,8 +138,8 @@ export function sanitizeOutput(input: string, opts: SanitizeOptions = {}): strin
     out = out.replace(new RegExp(escapeRegExp(secret), "g"), "[REDACTED]");
   }
 
-  for (const pattern of SECRET_VALUE_PATTERNS) {
-    out = out.replace(pattern, "[REDACTED]");
+  for (const { pattern, replacement } of SECRET_VALUE_PATTERNS) {
+    out = out.replace(pattern, replacement);
   }
 
   // Remove env-looking KEY=VALUE lines (commonly emitted if a test dumps env).
@@ -153,17 +176,28 @@ export function sanitizeForMarkdown(text: string, maxChars = 400, opts: Sanitize
   let clean = sanitizeOutput(text, opts);
   // Collapse newlines into single spaces for inline table/bullet safety.
   clean = clean.replace(/[\r\n]+/g, " ").trim();
-  // Convert markdown links `[label](url)` into plain text label so attacker URLs are stripped.
-  clean = clean.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
-  // Strip raw HTML tags completely.
-  clean = clean.replace(/<[^>]*>/g, "");
+  // Iteratively convert nested markdown links `[label](url)` into plain text labels.
+  let prev = "";
+  for (let i = 0; i < 8 && clean !== prev; i += 1) {
+    prev = clean;
+    clean = clean.replace(/\[([^\]]*)\]\((?:[^()]+|\([^()]*\))*\)/g, "$1");
+  }
+  // Strip raw HTML tags iteratively while keeping sanitizeOutput path placeholders intact.
+  prev = "";
+  for (let i = 0; i < 8 && clean !== prev; i += 1) {
+    prev = clean;
+    clean = clean.replace(/<(?!REPO>|WORKSPACE>|HOME>|TMP>)[^>]*>/g, "");
+  }
+  // Defang remaining bare http(s):// URLs so GitHub does not auto-link them.
+  clean = clean.replace(/\b(https?):\/\//gi, "$1:\u200B//");
   // Neutralize @mentions and issue #123 references with zero-width space.
   clean = clean.replace(/@/g, "@\u200B");
   clean = clean.replace(/#(\d+)/g, "#\u200B$1");
   // Escape remaining markdown formatting delimiters.
   clean = clean.replace(/([\\`*_[\]|<>])/g, "\\$1");
   if (clean.length > maxChars) {
-    clean = `${clean.slice(0, Math.max(0, maxChars - 3))}...`;
+    const budget = Math.max(0, maxChars - 3);
+    clean = `${clean.slice(0, budget).replace(/\\+$/, "")}...`;
   }
   return clean;
 }

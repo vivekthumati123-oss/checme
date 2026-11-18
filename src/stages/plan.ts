@@ -15,6 +15,7 @@ import {
 } from "../contracts";
 import { detectFrameworkForLanguage } from "../core/context";
 import { getDiffChangedRanges, resolveDiffRange, type PullRequestEventLike } from "../core/git";
+import { detectLanguageFromPath } from "../core/parse";
 import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
 import { buildLanguageToolVersions, resolveJavaBuildTool, resolveToolchainForLanguage } from "../languages/toolchains";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
@@ -42,7 +43,7 @@ export function matchLanguageSourceFiles(
       nocase: process.platform === "win32",
     });
 
-    const matched = changedPaths.filter((p) => !excludeMatcher(p) && matcher(p));
+    const matched = changedPaths.filter((p) => detectLanguageFromPath(p) === lang && !excludeMatcher(p) && matcher(p));
     if (matched.length > 0) {
       result.set(lang, matched);
     }
@@ -174,6 +175,15 @@ export async function runPlan(opts: RunPlanOptions): Promise<PlanStageResult> {
         language: lang,
         reason: "unsupported_framework",
         found: `${toolInfo.framework.name}@${toolInfo.framework.version ?? "unknown"}`,
+      });
+      continue;
+    }
+
+    if (!tc.supported) {
+      skipped.push({
+        language: lang,
+        reason: "unsupported_tool_version",
+        found: tc.entry.version,
       });
       continue;
     }

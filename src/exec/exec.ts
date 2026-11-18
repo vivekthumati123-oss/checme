@@ -46,6 +46,36 @@ const PROXY_ALLOWLIST = [
 ] as const;
 
 const PROXY_KEY_SET = new Set<string>(PROXY_ALLOWLIST);
+const PROXY_KEY_UPPER = new Set<string>(PROXY_ALLOWLIST.map((k) => k.toUpperCase()));
+const EXPLICIT_FORBIDDEN_UPPER = new Set<string>([...EXPLICIT_FORBIDDEN_ENV_KEYS].map((k) => k.toUpperCase()));
+const URL_PROXY_KEYS_UPPER = new Set<string>(["HTTP_PROXY", "HTTPS_PROXY"]);
+
+function stripProxyCredentials(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.username || parsed.password) {
+      parsed.username = "";
+      parsed.password = "";
+      return parsed.toString();
+    }
+  } catch {
+    // Non-URL proxy strings left unchanged unless matching user:pass@
+    return rawUrl.replace(/((?:https?|socks5h?|ftp):\/\/)[^/@\s]+@/gi, "$1");
+  }
+  return rawUrl;
+}
+
+function setEnvCaseAware(target: Record<string, string>, key: string, value: string): void {
+  if (process.platform === "win32") {
+    const upper = key.toUpperCase();
+    for (const existingKey of Object.keys(target)) {
+      if (existingKey !== key && existingKey.toUpperCase() === upper) {
+        delete target[existingKey];
+      }
+    }
+  }
+  target[key] = value;
+}
 
 export function buildChildEnv(
   cfg?: Pick<UnitAgentConfig, "env">,
@@ -57,7 +87,7 @@ export function buildChildEnv(
   for (const key of BASE_ALLOWLIST) {
     const val = parentEnv[key];
     if (typeof val === "string") {
-      result[key] = val;
+      setEnvCaseAware(result, key, val);
     }
   }
 
@@ -73,7 +103,7 @@ export function buildChildEnv(
         upper === "COMSPEC" ||
         upper === "WINDIR"
       ) {
-        result[k] = v;
+        setEnvCaseAware(result, k, v);
       }
     }
   }
@@ -82,7 +112,7 @@ export function buildChildEnv(
     for (const key of PROXY_ALLOWLIST) {
       const val = parentEnv[key];
       if (typeof val === "string") {
-        result[key] = val;
+        setEnvCaseAware(result, key, URL_PROXY_KEYS_UPPER.has(key.toUpperCase()) ? stripProxyCredentials(val) : val);
       }
     }
   }
@@ -90,13 +120,13 @@ export function buildChildEnv(
   for (const key of cfg?.env.pass ?? []) {
     const val = parentEnv[key];
     if (typeof val === "string") {
-      result[key] = val;
+      setEnvCaseAware(result, key, val);
     }
   }
 
   for (const [key, val] of Object.entries(extraPass)) {
     if (typeof val === "string") {
-      result[key] = val;
+      setEnvCaseAware(result, key, val);
     }
   }
 
@@ -106,11 +136,12 @@ export function buildChildEnv(
 
   // Always delete secret-named env variables (even if listed in env.pass), except explicit proxy vars.
   for (const key of Object.keys(result)) {
-    if (EXPLICIT_FORBIDDEN_ENV_KEYS.has(key)) {
+    const upper = key.toUpperCase();
+    if (EXPLICIT_FORBIDDEN_UPPER.has(upper)) {
       delete result[key];
       continue;
     }
-    if (PROXY_KEY_SET.has(key)) {
+    if (PROXY_KEY_SET.has(key) || PROXY_KEY_UPPER.has(upper)) {
       continue;
     }
     if (SECRET_ENV_KEY_RE.test(key)) {
@@ -233,12 +264,40 @@ function resolveWindowsExecutable(file: string, cwd: string, env: Record<string,
   }
 
   const rawPath = env.PATH ?? env.Path ?? env.path ?? "";
-  const searchDirs = [cwd, ...rawPath.split(path.delimiter).filter(Boolean)];
+  const searchDirs = rawPath
+    .split(path.delimiter)
+    .map((dir) => dir.trim().replace(/^"+|"+$/g, ""))
+    .filter(Boolean);
   for (const dir of searchDirs) {
     const found = probeInDir(path.join(dir, file));
     if (found) return found;
   }
   return null;
+}
+
+function resolvePosixExecutable(file: string, cwd: string, env: Record<string, string>): string | null {
+  if (file.includes("/")) {
+    const candidate = path.resolve(cwd, file);
+    return isRegularFile(candidate) && hasExecutablePermission(candidate) ? candidate : null;
+  }
+  const rawPath = env.PATH ?? "";
+  for (const dir of rawPath.split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(dir, file);
+    if (isRegularFile(candidate) && hasExecutablePermission(candidate)) return candidate;
+  }
+  return null;
+}
+
+function validateWin32BatchArg(arg: string): void {
+  if (/[\r\n\0"%!]/.test(arg)) {
+    throw new Error("Unsafe control or batch metacharacter in Windows .cmd/.bat argument.");
+  }
+}
+
+function quoteWin32BatchArg(arg: string): string {
+  validateWin32BatchArg(arg);
+  if (arg.length === 0) return '""';
+  return /[\s\t&|<>()^;=]/.test(arg) ? `"${arg}"` : arg;
 }
 
 function quoteWin32Arg(arg: string, quoteTrigger: RegExp = /[\s\t\n\v"]/): string {
@@ -259,11 +318,6 @@ function quoteWin32Arg(arg: string, quoteTrigger: RegExp = /[\s\t\n\v"]/): strin
   }
   out += `${"\\".repeat(backslashes * 2)}"`;
   return out;
-}
-
-function escapeCmdArg(arg: string): string {
-  const quoted = quoteWin32Arg(arg, /[\s\t\n\v"&|<>()^%!;=]/);
-  return quoted.replace(/([()%!^"<>&|])/g, "^$1");
 }
 
 function buildWinEnvBlock(envObj: Record<string, string>): Buffer {
@@ -489,7 +543,7 @@ function ensureWinBroker(): WinBrokerChild {
 
   const child = spawn(psExe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", bootstrap], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: process.env,
+    env: buildChildEnv(undefined, {}, process.env),
     windowsHide: true,
   }) as WinBrokerChild;
 
@@ -627,9 +681,15 @@ async function runInWindowsJob(
   const isBatch = /\.(cmd|bat)$/i.test(resolvedExe);
   const sysRoot = env.SystemRoot || env.SYSTEMROOT || process.env.SystemRoot || "C:\\Windows";
   const appName = isBatch ? env.ComSpec || env.COMSPEC || path.join(sysRoot, "System32", "cmd.exe") : resolvedExe;
-  const cmdLine = isBatch
-    ? `${quoteWin32Arg(appName)} /d /s /c "${quoteWin32Arg(resolvedExe)}${args.length > 0 ? ` ${args.map(escapeCmdArg).join(" ")}` : ""}"`
-    : [quoteWin32Arg(resolvedExe), ...args.map((a) => quoteWin32Arg(a))].join(" ");
+  let cmdLine: string;
+  if (isBatch) {
+    validateWin32BatchArg(resolvedExe);
+    const exeToken = /[\s\t&|<>()^;=]/.test(resolvedExe) ? `"${resolvedExe}"` : resolvedExe;
+    const inner = `${exeToken}${args.length > 0 ? ` ${args.map(quoteWin32BatchArg).join(" ")}` : ""}`;
+    cmdLine = `${quoteWin32Arg(appName)} /d /v:off /s /c "${inner}"`;
+  } else {
+    cmdLine = [quoteWin32Arg(resolvedExe), ...args.map((a) => quoteWin32Arg(a))].join(" ");
+  }
 
   const broker = ensureWinBroker();
   const id = String((winBrokerSeq += 1));
@@ -791,6 +851,11 @@ export async function runCommand(
     message?: string;
     spawnErrorOverride?: string;
   };
+  const resolvedExe =
+    process.platform === "win32"
+      ? resolveWindowsExecutable(file, options.cwd, env)
+      : resolvePosixExecutable(file, options.cwd, env);
+
   if (process.platform === "win32" && options.killChildrenOnExit) {
     if (!existsSync(options.cwd)) {
       return {
@@ -804,7 +869,6 @@ export async function runCommand(
         commandString,
       };
     }
-    const resolvedExe = resolveWindowsExecutable(file, options.cwd, env);
     if (!resolvedExe) {
       return {
         exitCode: 1,
@@ -818,6 +882,24 @@ export async function runCommand(
       };
     }
     res = await runInWindowsJob(resolvedExe, args, options.cwd, env, timeoutMs);
+  } else if (process.platform === "win32" && resolvedExe && /\.(cmd|bat)$/i.test(resolvedExe)) {
+    validateWin32BatchArg(resolvedExe);
+    const sysRoot = env.SystemRoot || env.SYSTEMROOT || process.env.SystemRoot || "C:\\Windows";
+    const comspec = env.ComSpec || env.COMSPEC || path.join(sysRoot, "System32", "cmd.exe");
+    const exeToken = /[\s\t&|<>()^;=]/.test(resolvedExe) ? `"${resolvedExe}"` : resolvedExe;
+    const inner = `${exeToken}${args.length > 0 ? ` ${args.map(quoteWin32BatchArg).join(" ")}` : ""}`;
+    res = await execa(comspec, ["/d", "/v:off", "/s", "/c", `"${inner}"`], {
+      cwd: options.cwd,
+      env,
+      extendEnv: false,
+      shell: false,
+      reject: false,
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      timeout: timeoutMs,
+      maxBuffer: 1_000_000,
+      all: true,
+    });
   } else {
     const treeId =
       options.killChildrenOnExit && process.platform !== "win32"
@@ -838,18 +920,34 @@ export async function runCommand(
     });
 
     const pid = child.pid;
+    let forcedTimeout = false;
+    const forceTimer =
+      process.platform !== "win32" && timeoutMs > 0
+        ? setTimeout(() => {
+            forcedTimeout = true;
+            void killProcessTree(pid);
+            if (treeId) killDetachedByExecId(treeId);
+          }, timeoutMs + 250)
+        : null;
+    if (process.platform !== "win32" && options.killChildrenOnExit) {
+      child.once("exit", () => {
+        void killProcessTree(pid);
+        if (treeId) killDetachedByExecId(treeId);
+      });
+    }
     let awaited: Awaited<typeof child> | undefined;
     try {
       awaited = await child;
     } finally {
-      if (awaited?.timedOut || options.killChildrenOnExit) {
+      if (forceTimer) clearTimeout(forceTimer);
+      if (awaited?.timedOut || forcedTimeout || options.killChildrenOnExit) {
         await killProcessTree(pid);
         if (treeId) {
           killDetachedByExecId(treeId);
         }
       }
     }
-    res = awaited;
+    res = awaited && forcedTimeout && !awaited.timedOut ? { ...awaited, timedOut: true } : awaited;
   }
 
   const stdout = typeof res.stdout === "string" ? res.stdout : "";
@@ -859,7 +957,7 @@ export async function runCommand(
     process.platform === "win32" &&
     res.exitCode === 1 &&
     (/is not recognized as an internal or external command/i.test(all) ||
-      (!stdout.trim() && !stderr.trim() && !existsSync(path.resolve(options.cwd, file))));
+      (!stdout.trim() && !stderr.trim() && !resolvedExe));
   const spawnError =
     res.spawnErrorOverride ??
     (res.failed && (res.exitCode === undefined || isMissingWinCmd) ? (res.shortMessage ?? res.message) : undefined);

@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigSchema, EXIT_CODES } from "../../src/contracts";
 import { sha256Hex } from "../../src/core/context";
-import { FakeLlmClient, isAuthErrorMessage } from "../../src/llm";
+import { FakeLlmClient, isAuthErrorMessage, type LlmTestClient } from "../../src/llm";
 import { runGenerate } from "../../src/stages/generate";
+import { runRepair } from "../../src/stages/repair";
 
 const tempDirs: string[] = [];
 
@@ -215,5 +216,74 @@ describe("generate stage & LLM isolation", () => {
     });
 
     expect(proposed.files).toEqual([]);
+  });
+
+  it("accumulates SDK requestsUsed accurately and enforces shared generate+repair budget and AuthError in repair", async () => {
+    const dir = makeTempDir();
+    const { workDir, cfg } = setupManifestFixture(dir, 1);
+
+    const multiReqClient: LlmTestClient = {
+      generateTests: async ({ context }) => ({
+        submission: {
+          testPath: "test/app.test.ts",
+          content: 'import { expect, it } from "vitest";\nit("ok", () => expect(1).toBe(1));',
+          symbolIds: context.targets.map((t) => t.symbolId),
+          assumptions: [],
+        },
+        requestsUsed: 2,
+      }),
+      repairTests: async () => {
+        throw new Error("should not reach");
+      },
+    };
+
+    const budgetCfg = { ...cfg, limits: { ...cfg.limits, maxRequestsPerRun: 2 } };
+    const proposed = await runGenerate({
+      repoRoot: dir,
+      workDir,
+      config: budgetCfg,
+      llmClient: multiReqClient,
+      writeOutputs: false,
+    });
+    expect(proposed.files[0]?.usage?.requests).toBe(2);
+
+    const failures = {
+      schemaVersion: 1 as const,
+      files: [
+        {
+          fileId: "app_12345678",
+          failingTests: ["ok"],
+          gate: "run" as const,
+          reason: "generated_test_failure" as const,
+          output: "err",
+        },
+      ],
+    };
+
+    // Repair inherits requestsUsed=2 from proposed.json against maxRequestsPerRun=2 -> over_request_budget
+    const repairedOverBudget = await runRepair({
+      repoRoot: dir,
+      workDir,
+      config: budgetCfg,
+      failures,
+      proposed,
+      llmClient: multiReqClient,
+      writeOutputs: false,
+    });
+    expect(repairedOverBudget.files[0]?.status).toBe("over_request_budget");
+
+    // AuthError inside repairTests must exit 40 immediately
+    const authRepairClient = FakeLlmClient.fromHandler(() => ({ content: "", simulateAuthError: true }));
+    await expect(
+      runRepair({
+        repoRoot: dir,
+        workDir,
+        config: { ...cfg, limits: { ...cfg.limits, maxRequestsPerRun: 5 } },
+        failures,
+        proposed,
+        llmClient: authRepairClient,
+        writeOutputs: false,
+      }),
+    ).rejects.toMatchObject({ code: EXIT_CODES.SDK_OR_AUTH });
   });
 });

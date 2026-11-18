@@ -14,10 +14,22 @@ export interface PullRequestEventLike {
   };
 }
 
-export const DIFF_FLAGS = ["--unified=0", "--no-color", "--find-renames", "--diff-filter=AMR"] as const;
+export const DIFF_FLAGS = [
+  "--unified=0",
+  "--no-color",
+  "--no-ext-diff",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+  "--find-renames",
+  "--diff-filter=AMR",
+] as const;
 
 export async function requireCommit(sha: string, repoRoot: string): Promise<void> {
-  const res = await runCommand("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: repoRoot });
+  const cleanSha = sha.trim();
+  if (!cleanSha || cleanSha.startsWith("-")) {
+    throw new StageError(`Invalid commit ref "${sha}".`, EXIT_CODES.CONFIG_OR_INPUT, "guard", "invalid_diff_sha");
+  }
+  const res = await runCommand("git", ["cat-file", "-e", `${cleanSha}^{commit}`], { cwd: repoRoot });
   if (res.exitCode !== 0) {
     throw new StageError(
       `Commit "${sha}" not found; the checkout needs fetch-depth: 0.`,

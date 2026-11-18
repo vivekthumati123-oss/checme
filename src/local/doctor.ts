@@ -79,7 +79,9 @@ function collectFilesMatching(repoRoot: string, workingDirectory: string, globs:
   return found;
 }
 
-function findExistingSampleTestFile(repoRoot: string, language: LanguageKey): string | null {
+function findExistingSampleTestFile(repoRoot: string, workingDirectory: string, language: LanguageKey): string | null {
+  const wdAbs = path.resolve(repoRoot, workingDirectory || ".");
+  if (!existsSync(wdAbs)) return null;
   const patterns: Record<LanguageKey, string[]> = {
     javascript: [
       "**/*.test.{ts,tsx,js,jsx,mjs}",
@@ -91,7 +93,7 @@ function findExistingSampleTestFile(repoRoot: string, language: LanguageKey): st
     java: ["**/*Test.java"],
   };
   const matcher = picomatch(patterns[language], { dot: false, nocase: process.platform === "win32" });
-  const stack: Array<{ dir: string; depth: number }> = [{ dir: repoRoot, depth: 0 }];
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: wdAbs, depth: 0 }];
   while (stack.length > 0) {
     const { dir, depth } = stack.pop()!;
     if (depth > 6) continue;
@@ -107,8 +109,10 @@ function findExistingSampleTestFile(repoRoot: string, language: LanguageKey): st
       if (ent.isDirectory()) {
         stack.push({ dir: full, depth: depth + 1 });
       } else if (ent.isFile()) {
-        const rel = cleanRepoRelative(normalizeSlashes(path.relative(repoRoot, full)));
-        if (matcher(rel)) return rel;
+        const wdRel = cleanRepoRelative(normalizeSlashes(path.relative(wdAbs, full)));
+        if (matcher(wdRel)) {
+          return cleanRepoRelative(normalizeSlashes(path.relative(repoRoot, full)));
+        }
       }
     }
   }
@@ -137,20 +141,27 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
   // Check 1: Node >= 20, git, baseRef
   const agentNodeVersion = opts.nodeVersionOverride ?? process.versions.node;
   const agentMajor = parseNodeMajor(agentNodeVersion);
-  const repoNodeRes = await runCommand("node", ["-v"], { cwd: opts.repoRoot, timeoutMs: 10_000 });
+  const configuredNodeCmd = loadedConfig?.local.nodeCommand?.trim() || "node";
+  const repoNodeRes = await runCommand(configuredNodeCmd, ["-v"], { cwd: opts.repoRoot, timeoutMs: 10_000 });
   const repoNodeVersion = repoNodeRes.exitCode === 0 ? repoNodeRes.stdout.trim() : "unknown";
   const gitRes = await runCommand("git", ["rev-parse", "--is-inside-work-tree"], { cwd: opts.repoRoot });
   const inGitRepo = gitRes.exitCode === 0 && gitRes.stdout.trim() === "true";
 
-  const baseCandidate = loadedConfig?.local.baseRef ?? "main";
+  const explicitBaseRef = loadedConfig?.local.baseRef;
+  const baseCandidate = explicitBaseRef ?? "main";
   let baseResolvable = false;
   if (inGitRepo) {
     const rev = await runCommand("git", ["rev-parse", "--verify", baseCandidate], { cwd: opts.repoRoot });
     if (rev.exitCode === 0) {
       baseResolvable = true;
-    } else {
-      const headRev = await runCommand("git", ["rev-parse", "--verify", "HEAD"], { cwd: opts.repoRoot });
-      baseResolvable = headRev.exitCode === 0;
+    } else if (!explicitBaseRef) {
+      const masterRev = await runCommand("git", ["rev-parse", "--verify", "master"], { cwd: opts.repoRoot });
+      if (masterRev.exitCode === 0) {
+        baseResolvable = true;
+      } else {
+        const headRev = await runCommand("git", ["rev-parse", "--verify", "HEAD"], { cwd: opts.repoRoot });
+        baseResolvable = headRev.exitCode === 0;
+      }
     }
   }
 
@@ -378,7 +389,7 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
       }
 
       if (opts.full) {
-        const sampleTest = findExistingSampleTestFile(opts.repoRoot, lang);
+        const sampleTest = findExistingSampleTestFile(opts.repoRoot, langCfg.workingDirectory, lang);
         if (sampleTest) {
           const fw = detectFrameworkForLanguage({ language: lang, langConfig: langCfg, repoRoot: opts.repoRoot });
           const ws = prepareValidationWorkspace(opts.repoRoot, loadedConfig, "local");
@@ -478,6 +489,9 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
     path.join(opts.repoRoot, ".github", "prompts", "unit-tests.prompt.md"),
     path.join(opts.repoRoot, ".github", "prompts", "unit-doctor.prompt.md"),
     path.join(opts.repoRoot, ".github", "prompts", "unit-repair.prompt.md"),
+    path.join(opts.repoRoot, ".github", "prompts", "unit-tests-staged.prompt.md"),
+    path.join(opts.repoRoot, ".github", "prompts", "unit-tests-file.prompt.md"),
+    path.join(opts.repoRoot, ".github", "prompts", "unit-tests-apply.prompt.md"),
   ];
   const allChatExist = existsSync(agentFile) && promptFiles.every((p) => existsSync(p));
   if (!allChatExist) {

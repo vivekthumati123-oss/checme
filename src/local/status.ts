@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { loadConfig } from "../config";
@@ -40,8 +40,16 @@ export async function runLocalStatus(opts: RunLocalStatusOptions): Promise<Local
   const appliedPath = path.join(opts.workDir, "chat", "applied.json");
   const latestValidate = findHighestValidateAttempt(opts.workDir);
 
+  const appliedMtime = existsSync(appliedPath) ? statSync(appliedPath).mtimeMs : -1;
+  const newerUpstreamMtimes = [
+    existsSync(manifestPath) ? statSync(manifestPath).mtimeMs : -1,
+    existsSync(proposedChatPath) ? statSync(proposedChatPath).mtimeMs : -1,
+    latestValidate ? statSync(latestValidate.reportPath).mtimeMs : -1,
+  ];
+  const appliedIsFresh = appliedMtime >= 0 && newerUpstreamMtimes.every((t) => t <= appliedMtime);
+
   let stage: LocalStatusSummary["stage"] = "none";
-  if (existsSync(appliedPath)) {
+  if (appliedIsFresh) {
     stage = "applied";
   } else if (latestValidate) {
     stage = "validated";
@@ -67,19 +75,27 @@ export async function runLocalStatus(opts: RunLocalStatusOptions): Promise<Local
     }
   }
 
-  // Flag any drafts inside stagingDir that appear in `git status --porcelain` (they should not)
+  // Flag any drafts inside stagingDir that appear in `git status --porcelain -z` (they should not)
   const stagingRel = cleanRepoRelative(normalizeSlashes(config.local.stagingDir));
   const stagedFilesInGitStatus: string[] = [];
-  const gitRes = await runCommand("git", ["status", "--porcelain", "--untracked-files=all"], {
+  const gitRes = await runCommand("git", ["status", "--porcelain", "-z", "--untracked-files=all"], {
     cwd: opts.repoRoot,
   });
   if (gitRes.exitCode === 0) {
-    for (const line of gitRes.stdout.split(/\r?\n/)) {
-      const rawPath = line.slice(3).trim();
+    const entries = gitRes.stdout.split("\0");
+    for (let i = 0; i < entries.length; i += 1) {
+      const rec = entries[i] ?? "";
+      if (rec.length < 4) continue;
+      const statusXY = rec.slice(0, 2);
+      const rawPath = rec.slice(3);
       if (!rawPath) continue;
       const norm = cleanRepoRelative(normalizeSlashes(rawPath));
       if (norm === stagingRel || norm.startsWith(`${stagingRel}/`)) {
         stagedFilesInGitStatus.push(norm);
+      }
+      // Renames/copies emit an additional NUL-delimited original path entry
+      if (statusXY.includes("R") || statusXY.includes("C")) {
+        i += 1;
       }
     }
   }

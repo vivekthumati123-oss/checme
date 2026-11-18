@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
 
@@ -33,7 +33,7 @@ import {
 } from "../core/coverage";
 import { getDiffChangedRanges, getLocalGitDiff } from "../core/git";
 import { detectLanguageFromPath, parseSourceFile, type FileParseResult } from "../core/parse";
-import { cleanRepoRelative, normalizeSlashes, toRepoPath } from "../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../core/paths";
 import { rankAndSelectSymbols, type CandidateSymbolInput } from "../core/rank";
 import { runCommand } from "../exec/exec";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
@@ -159,6 +159,7 @@ async function resolveChangedLinesFromSource(
     const untracked = await listUntrackedRepoFiles(repoRoot);
     for (const rel of untracked) {
       if (changedLinesByFile.has(rel)) continue;
+      if (!isSafeRealPathInsideRoot(rel, repoRoot, { requireRegularFileIfExists: true })) continue;
       const abs = path.join(repoRoot, rel);
       if (!existsSync(abs)) continue;
       const lineCount = readFileSync(abs, "utf8").split(/\r?\n/).length;
@@ -244,6 +245,7 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
     return cached;
   };
   const allCandidates: CandidateSymbolInput[] = [];
+  const seenTestPaths = new Set<string>();
   const parsedByPath = new Map<
     string,
     {
@@ -288,8 +290,17 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
     const absPath = path.join(opts.repoRoot, repoRelPath);
     if (!existsSync(absPath)) continue;
 
-    const stat = statSync(absPath);
-    if (!stat.isFile()) continue;
+    if (!isSafeRealPathInsideRoot(repoRelPath, opts.repoRoot, { requireRegularFileIfExists: true })) {
+      skipped.push({
+        path: repoRelPath,
+        reason: "path_violation",
+        detail: "Source path resolves via symlink or escapes repository root.",
+      });
+      continue;
+    }
+
+    const stat = lstatSync(absPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) continue;
     if (stat.size > MAX_SOURCE_BYTES) {
       skipped.push({ path: repoRelPath, reason: "too_large", detail: `Size ${stat.size} bytes exceeds 512 KB.` });
       continue;
@@ -395,6 +406,17 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
       });
       continue;
     }
+
+    const collisionKey = process.platform === "win32" ? testPathRes.testPath.toLowerCase() : testPathRes.testPath;
+    if (seenTestPaths.has(collisionKey)) {
+      skipped.push({
+        path: repoRelPath,
+        reason: "test_path_collision",
+        detail: `Mapped test path "${testPathRes.testPath}" collides with an earlier target file.`,
+      });
+      continue;
+    }
+    seenTestPaths.add(collisionKey);
 
     parsedByPath.set(repoRelPath, {
       language,

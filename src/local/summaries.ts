@@ -2,18 +2,23 @@ import { normalizeSlashes } from "../core/paths";
 
 export const MAX_LOCAL_SUMMARY_BYTES = 8192;
 
-export function normalizeSummaryPaths<T>(value: T): T {
+const PATH_SUMMARY_KEYS = new Set(["path", "testPath", "stagedPath", "contextPath", "logPath", "baseRef"]);
+
+export function normalizeSummaryPaths<T>(value: T, keyName?: string): T {
   if (typeof value === "string") {
-    return value.replace(/\\/g, "/") as unknown as T;
+    if (keyName && (PATH_SUMMARY_KEYS.has(keyName) || keyName === "stagedFilesInGitStatus")) {
+      return value.replace(/\\/g, "/") as unknown as T;
+    }
+    return value;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeSummaryPaths(item)) as unknown as T;
+    return value.map((item) => normalizeSummaryPaths(item, keyName)) as unknown as T;
   }
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
-      out[k] = normalizeSummaryPaths(v);
+      out[k] = normalizeSummaryPaths(v, k);
     }
     return out as T;
   }
@@ -67,6 +72,9 @@ export function serializeBoundedSummary<T extends Record<string, unknown>>(
         } else if (filesArr.length === 1 && Array.isArray(filesArr[0]?.symbols) && filesArr[0].symbols.length > 0) {
           filesArr[0].symbols = [];
           changed = true;
+        } else if (filesArr.length === 1) {
+          filesArr.pop();
+          changed = true;
         }
       }
     } else if (Array.isArray(draft.checks) && draft.checks.length > 0) {
@@ -82,6 +90,11 @@ export function serializeBoundedSummary<T extends Record<string, unknown>>(
         draft.checks.pop();
         changed = true;
       }
+    }
+
+    if (!changed && typeof draft.next === "string" && draft.next.length > 120) {
+      (draft as Record<string, unknown>).next = draft.next.slice(0, 120);
+      changed = true;
     }
 
     if (!changed) break;

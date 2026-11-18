@@ -1,7 +1,8 @@
-import type { FailureReason } from "../../contracts";
+import type { FailureReason, LanguageKey } from "../../contracts";
 import type { ExecResult } from "../../exec/exec";
 import { matchToolchainMismatch } from "../../languages/toolchains";
 import { stripTerminalEscapesAndControls } from "../../telemetry";
+import { matchWrapperBootstrapFailure } from "./runners/java/detect";
 
 const RUNNER_ENV_PATTERNS: readonly RegExp[] = [
   /\bunrecognized arguments:.*--cov\b/i,
@@ -14,8 +15,12 @@ const RUNNER_ENV_PATTERNS: readonly RegExp[] = [
 const NETWORK_ENV_RE =
   /(?:Could not resolve|Could not GET|Connect to [^\r\n]+ failed|PKIX path building failed|Temporary failure in name resolution)/i;
 const NETWORK_ERRNO_RE = /\b(?:ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)\b/;
+const NETWORK_CONTEXT_RE = /\b(?:npm|pip|pypi|registry|maven|gradle|downloading|fetch|proxy|ssl|tls|https?:)\b/i;
 
-export function classifyExecutionFailure(execRes: ExecResult): {
+export function classifyExecutionFailure(
+  execRes: ExecResult,
+  language?: LanguageKey,
+): {
   reason: FailureReason;
   detail: string;
 } {
@@ -38,22 +43,20 @@ export function classifyExecutionFailure(execRes: ExecResult): {
     };
   }
 
-  const mismatch = matchToolchainMismatch(combined);
+  const mismatch = matchToolchainMismatch(combined, language);
   if (mismatch) {
     return { reason: mismatch.reason, detail: mismatch.detail };
   }
 
-  if (
-    /Could not find or load main class org\.gradle\.wrapper/i.test(combined) ||
-    /mvnw(?:\.cmd)?.*(?:not found|No such file|failed)/i.test(combined)
-  ) {
+  const wrapperFail = matchWrapperBootstrapFailure(combined);
+  if (wrapperFail.isWrapperError) {
     return {
       reason: "wrapper_unavailable",
-      detail: "Build wrapper unavailable or failed to bootstrap.",
+      detail: wrapperFail.detail || "Build wrapper unavailable or failed to bootstrap.",
     };
   }
 
-  if (NETWORK_ENV_RE.test(combined) || NETWORK_ERRNO_RE.test(combined)) {
+  if (NETWORK_ENV_RE.test(combined) || (NETWORK_ERRNO_RE.test(combined) && NETWORK_CONTEXT_RE.test(combined))) {
     return {
       reason: "environment_error",
       detail: "Network/proxy/TLS dependency resolution failure in runner.",
@@ -64,7 +67,7 @@ export function classifyExecutionFailure(execRes: ExecResult): {
     /command not found|is not recognized as an internal or external command|No such file or directory/i.test(
       combined,
     ) &&
-    !/AssertionError|FAIL|ERROR/.test(cleanStdout)
+    !/AssertionError|AssertionFailedError|\bFAIL\b|\bERROR\b/.test(combined)
   ) {
     return {
       reason: "tool_missing",

@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Command } from "commander";
 
@@ -106,19 +107,6 @@ function readEventMeta(explicitEventPath?: string): ParsedEventMeta {
   };
 }
 
-function stageDirName(stage: StageName): string {
-  const map: Record<StageName, string> = {
-    prepare: ARTIFACTS.prepare.dir,
-    generate: ARTIFACTS.proposed.dir,
-    validate1: ARTIFACTS.validate1.dir,
-    repair: ARTIFACTS.repaired.dir,
-    validate2: ARTIFACTS.validate2.dir,
-    publish: ARTIFACTS.final.dir,
-    commit: "commit",
-  };
-  return map[stage];
-}
-
 function hasAnyNoticeStatus(workDir: string): boolean {
   for (const dir of [
     ARTIFACTS.prepare.dir,
@@ -204,6 +192,7 @@ function parsePositiveIntOption(raw: unknown, name: string, stage: StageName | "
 
 export function buildProgram(track?: CliTrackContext): Command {
   const program = new Command();
+  program.exitOverride();
 
   program
     .name("unit-agent")
@@ -982,9 +971,29 @@ export async function runCli(argv = process.argv): Promise<void> {
   try {
     await program.parseAsync(argv);
   } catch (err) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "exitCode" in err &&
+      typeof (err as { exitCode?: unknown }).exitCode === "number"
+    ) {
+      const cmdExit = (err as { exitCode: number }).exitCode;
+      if (cmdExit === 0) {
+        process.exitCode = EXIT_CODES.OK;
+        return;
+      }
+    }
     const opts = program.opts<GlobalOptions>();
-    const isLocalCommand = argv.includes("local") || (argv.includes("config") && argv.includes("check"));
-    const code: ExitCode = err instanceof StageError ? err.code : EXIT_CODES.INTERNAL;
+    const isLocalCommand = track.stage === "local";
+    const code: ExitCode =
+      err instanceof StageError
+        ? err.code
+        : err &&
+            typeof err === "object" &&
+            "code" in err &&
+            String((err as { code?: unknown }).code).startsWith("commander.")
+          ? EXIT_CODES.CONFIG_OR_INPUT
+          : EXIT_CODES.INTERNAL;
     if (!isLocalCommand) {
       const rawStage = err instanceof StageError ? err.stage : track.stage;
       const stageForError: StageName =
@@ -993,10 +1002,7 @@ export async function runCli(argv = process.argv): Promise<void> {
             ? "prepare"
             : track.stage
           : rawStage;
-      const expectedStatusPath = path.join(track.workDir, stageDirName(stageForError), "status.json");
-      if (!existsSync(expectedStatusPath)) {
-        writeStageStatus(track.workDir, mapErrorToStageStatus(stageForError, err, track.repoRoot).status);
-      }
+      writeStageStatus(track.workDir, mapErrorToStageStatus(stageForError, err, track.repoRoot).status);
     }
     const rawMsg = err instanceof Error ? err.message : String(err);
     const msg = sanitizeOutput(rawMsg, { repoRoot: track.repoRoot });
@@ -1008,9 +1014,16 @@ export async function runCli(argv = process.argv): Promise<void> {
   }
 }
 
-const isEntrypoint =
-  typeof process.argv[1] === "string" && (process.argv[1].endsWith("cli.ts") || process.argv[1].endsWith("cli.js"));
+function checkIsEntrypoint(): boolean {
+  const arg1 = process.argv[1];
+  if (typeof arg1 !== "string" || !arg1) return false;
+  try {
+    return realpathSync(path.resolve(arg1)) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return arg1.endsWith("cli.ts") || arg1.endsWith("cli.js");
+  }
+}
 
-if (isEntrypoint) {
+if (checkIsEntrypoint()) {
   void runCli();
 }

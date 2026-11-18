@@ -26,7 +26,17 @@ export async function verifyRunApprovals(params: {
     };
   }
 
-  const rawApprovers = await params.github.getRunApprovals(params.owner, params.repo, params.runId);
+  const authorLogin = params.prAuthorLogin.trim();
+  if (!authorLogin) {
+    return {
+      ok: false,
+      approvers: [],
+      reason: "Missing PR author login for approval verification.",
+    };
+  }
+
+  const envName = params.environmentName ?? DEFAULT_APPROVAL_ENVIRONMENT;
+  const rawApprovers = await params.github.getRunApprovals(params.owner, params.repo, params.runId, envName);
   const approvers = [...new Set(rawApprovers.map((a) => a.trim()).filter(Boolean))];
   if (approvers.length === 0) {
     return {
@@ -36,8 +46,8 @@ export async function verifyRunApprovals(params: {
     };
   }
 
-  const authorLower = params.prAuthorLogin.trim().toLowerCase();
-  const nonAuthorApprovers = authorLower ? approvers.filter((login) => login.toLowerCase() !== authorLower) : approvers;
+  const authorLower = authorLogin.toLowerCase();
+  const nonAuthorApprovers = approvers.filter((login) => login.toLowerCase() !== authorLower);
 
   if (nonAuthorApprovers.length > 0) {
     return {
@@ -47,7 +57,6 @@ export async function verifyRunApprovals(params: {
   }
 
   // Only allow PR-author self-approval when the environment positively permits it.
-  const envName = params.environmentName ?? DEFAULT_APPROVAL_ENVIRONMENT;
   let envInfo: Awaited<ReturnType<GitHubClientLike["getEnvironment"]>>;
   try {
     envInfo = await params.github.getEnvironment(params.owner, params.repo, envName);

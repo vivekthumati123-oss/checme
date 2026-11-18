@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 
 import { tokenizeCommand } from "../../../../config";
 import type { JavaConfig } from "../../../../contracts";
-import { runCommand } from "../../../../exec/exec";
 import { classifyExecutionFailure } from "../../classify";
 import {
   buildBaseOutcome,
@@ -13,7 +12,7 @@ import {
   type RunnerOutcome,
   type RunnerRequest,
 } from "../common";
-import { collectJavaXmlTestResults, type JavaProjectResolution } from "./detect";
+import { collectJavaXmlTestResults, runJavaCommandWithWrapperHandling, type JavaProjectResolution } from "./detect";
 
 export function locateJacocoInitScript(): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -41,15 +40,30 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
   const testClass = req.javaTestClassName ?? path.posix.parse(req.testPath).name;
   const runArgs = [...parsed.args];
 
-  if (!runArgs.some((a) => a === "test" || a.endsWith(":test"))) {
+  const isMultiModule = proj.moduleRelFromBuildRoot !== ".";
+  const moduleTask = isMultiModule
+    ? `:${proj.moduleRelFromBuildRoot.split("/").filter(Boolean).join(":")}:test`
+    : "test";
+
+  if (isMultiModule) {
+    const plainIdx = runArgs.indexOf("test");
+    if (plainIdx >= 0) {
+      runArgs[plainIdx] = moduleTask;
+    } else if (!runArgs.some((a) => a.endsWith(":test"))) {
+      runArgs.push(moduleTask);
+    }
+  } else if (!runArgs.some((a) => a === "test" || a.endsWith(":test"))) {
     runArgs.push("test");
   }
-  if (proj.moduleRelFromBuildRoot !== "." && !runArgs.includes("-p")) {
-    runArgs.push("-p", proj.moduleDirAbs);
-  }
+
   if (!runArgs.includes("--tests")) {
     const filter = req.packageName ? `${req.packageName}.${testClass}` : `*${testClass}`;
-    runArgs.push("--tests", filter);
+    const testIdx = runArgs.findIndex((a) => a === moduleTask || a === "test" || a.endsWith(":test"));
+    if (testIdx >= 0) {
+      runArgs.splice(testIdx + 1, 0, "--tests", filter);
+    } else {
+      runArgs.push("--tests", filter);
+    }
   }
 
   const initScript =
@@ -60,18 +74,27 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
   if (initScript && !runArgs.includes("-I") && !runArgs.includes("--init-script")) {
     runArgs.push("-I", initScript);
   }
+  if (req.isFlakeRerun && !runArgs.includes("--rerun-tasks")) {
+    runArgs.push("--rerun-tasks");
+  }
   if (req.offline && !runArgs.includes("--offline")) {
     runArgs.push("--offline");
   }
 
-  const execRes = await runCommand(execFile, runArgs, {
-    cwd: proj.buildRootAbs,
-    timeoutMs: req.config.limits.perRunTestTimeoutSeconds * 1000,
+  const extraEnv = javaCfg.coverage.jacocoVersion ? { UA_JACOCO_VERSION: javaCfg.coverage.jacocoVersion } : undefined;
+  const { execRes, wrapperUnavailable } = await runJavaCommandWithWrapperHandling({
+    repoRoot: req.repoRoot,
+    workDir: req.workDir,
     config: req.config,
-    extraEnv: javaCfg.coverage.jacocoVersion ? { UA_JACOCO_VERSION: javaCfg.coverage.jacocoVersion } : undefined,
+    javaConfig: javaCfg,
+    cwd: proj.buildRootAbs,
+    file: execFile,
+    args: runArgs,
+    timeoutMs: req.config.limits.perRunTestTimeoutSeconds * 1000,
+    extraEnv,
+    killChildrenOnExit: true,
     useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
     offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
-    killChildrenOnExit: true,
   });
 
   const reportsDir = javaCfg.testResultsDir
@@ -80,7 +103,10 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
 
   const tests = collectJavaXmlTestResults(reportsDir, testClass);
   const outcome = buildBaseOutcome(execRes, tests);
-  if (execRes.exitCode !== 0) {
+  if (wrapperUnavailable) {
+    outcome.failureReason = "wrapper_unavailable";
+    outcome.failureDetail = wrapperUnavailable.detail;
+  } else if (execRes.exitCode !== 0) {
     const classified = classifyExecutionFailure(execRes);
     outcome.failureReason = classified.reason;
     outcome.failureDetail = classified.detail;

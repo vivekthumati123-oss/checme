@@ -10,6 +10,7 @@ import {
   type FileContext,
   type SubmitTestsArgs,
 } from "../contracts";
+import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
 import { isAuthErrorMessage } from "./auth-errors";
 import type { FailurePromptDetail } from "./renderer";
 import { buildSystemPrompt, renderGenerationPrompt, renderRepairPrompt } from "./renderer";
@@ -46,6 +47,28 @@ export interface CopilotSdkClientOptions {
 
 export { isAuthErrorMessage };
 
+const TRANSIENT_LLM_ERROR_RE =
+  /\b(?:429|500|502|503|504)\b|rate[\s_-]*limit|too many requests|timed?\s*out|econnreset|etimedout|epipe|socket hang up|service unavailable/i;
+
+function isTransientLlmError(err: unknown): boolean {
+  if (err instanceof AuthError || err instanceof TruncatedOutputError) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  if (isAuthErrorMessage(msg)) return false;
+  return TRANSIENT_LLM_ERROR_RE.test(msg);
+}
+
+function safeRemoveTempDir(dirPath: string): void {
+  try {
+    rmSync(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  } catch {
+    // Best-effort temp cleanup
+  }
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class CopilotSdkTestClient implements LlmTestClient {
   private readonly model?: string;
   private readonly gitHubToken: string;
@@ -70,13 +93,13 @@ export class CopilotSdkTestClient implements LlmTestClient {
     javaTestClassName?: string;
     attempt: number;
   }): Promise<LlmInvokeResult> {
-    const systemPrompt = buildSystemPrompt(params.context.language);
+    const systemPrompt = buildSystemPrompt(params.context.language, params.maxTestsPerSymbol);
     const userPrompt = renderGenerationPrompt({
       context: params.context,
       maxTestsPerSymbol: params.maxTestsPerSymbol,
       javaTestClassName: params.javaTestClassName,
     });
-    return this.invokeIsolatedSession({
+    return this.invokeWithRetry({
       systemPrompt,
       userPrompt,
       expectedTestPath: params.context.conventions.testPath,
@@ -95,21 +118,53 @@ export class CopilotSdkTestClient implements LlmTestClient {
       currentTestContent: params.currentTestContent,
       failure: params.failure,
     });
-    return this.invokeIsolatedSession({
+    return this.invokeWithRetry({
       systemPrompt,
       userPrompt,
       expectedTestPath: params.context.conventions.testPath,
     });
   }
 
-  private async invokeIsolatedSession(params: {
+  private async invokeWithRetry(params: {
     systemPrompt: string;
     userPrompt: string;
     expectedTestPath: string;
   }): Promise<LlmInvokeResult> {
+    const maxAttempts = 3;
+    let totalRequestsUsed = 0;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const usageCounter = { count: 0 };
+      try {
+        const res = await this.invokeIsolatedSessionOnce(params, usageCounter);
+        return {
+          ...res,
+          requestsUsed: totalRequestsUsed + res.requestsUsed,
+        };
+      } catch (err) {
+        totalRequestsUsed += Math.max(1, usageCounter.count);
+        if (attempt < maxAttempts && isTransientLlmError(err)) {
+          const backoffMs = Math.min(5000, 1000 * attempt + Math.floor(Math.random() * 250));
+          await sleepMs(backoffMs);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error("Exhausted retry attempts invoking Copilot SDK session.");
+  }
+
+  private async invokeIsolatedSessionOnce(
+    params: {
+      systemPrompt: string;
+      userPrompt: string;
+      expectedTestPath: string;
+    },
+    usageCounter: { count: number },
+  ): Promise<LlmInvokeResult> {
     const isolatedHome = mkdtempSync(path.join(os.tmpdir(), "ua-copilot-home-"));
     const isolatedCwd = mkdtempSync(path.join(os.tmpdir(), "ua-copilot-cwd-"));
     let capturedSubmission: SubmitTestsArgs | null = null;
+    let submissionPathMismatch: string | null = null;
     let finishReason: string | undefined;
     let sawTruncation = false;
 
@@ -129,9 +184,19 @@ export class CopilotSdkTestClient implements LlmTestClient {
         isTerminal: true,
         skipPermission: true,
         handler: async (args) => {
+          const rawTestPath =
+            typeof (args as { testPath?: unknown })?.testPath === "string"
+              ? (args as { testPath: string }).testPath
+              : "";
+          const normSubmitted = rawTestPath ? cleanRepoRelative(normalizeSlashes(rawTestPath)) : "";
+          const normExpected = cleanRepoRelative(normalizeSlashes(params.expectedTestPath));
+          if (normSubmitted && normSubmitted !== normExpected) {
+            submissionPathMismatch = `Model submitted unexpected testPath "${rawTestPath}" (expected "${params.expectedTestPath}").`;
+            return { textResultForLlm: submissionPathMismatch, resultType: "failure" };
+          }
           capturedSubmission = SubmitTestsArgsSchema.parse({
             ...args,
-            testPath: (args as { testPath?: string })?.testPath || params.expectedTestPath,
+            testPath: params.expectedTestPath,
           });
           return { textResultForLlm: "accepted", resultType: "success" };
         },
@@ -149,8 +214,11 @@ export class CopilotSdkTestClient implements LlmTestClient {
       });
 
       session.on((event) => {
-        if (event.type === "assistant.usage" && typeof event.data?.finishReason === "string") {
-          finishReason = event.data.finishReason;
+        if (event.type === "assistant.usage") {
+          usageCounter.count += 1;
+          if (typeof event.data?.finishReason === "string") {
+            finishReason = event.data.finishReason;
+          }
         }
         if (event.type === "session.truncation") {
           sawTruncation = true;
@@ -158,6 +226,10 @@ export class CopilotSdkTestClient implements LlmTestClient {
       });
 
       await session.sendAndWait({ prompt: params.userPrompt }, this.timeoutMs);
+
+      if (submissionPathMismatch) {
+        throw new Error(submissionPathMismatch);
+      }
 
       if ((sawTruncation || finishReason === "length") && !capturedSubmission) {
         throw new TruncatedOutputError(
@@ -174,7 +246,7 @@ export class CopilotSdkTestClient implements LlmTestClient {
         submission: capturedSubmission,
         finishReason,
         truncated: sawTruncation || finishReason === "length",
-        requestsUsed: 1,
+        requestsUsed: Math.max(1, usageCounter.count),
       };
     } catch (err) {
       if (err instanceof TruncatedOutputError || err instanceof AuthError) {
@@ -187,8 +259,8 @@ export class CopilotSdkTestClient implements LlmTestClient {
       throw err;
     } finally {
       await client.stop().catch(() => undefined);
-      rmSync(isolatedHome, { recursive: true, force: true });
-      rmSync(isolatedCwd, { recursive: true, force: true });
+      safeRemoveTempDir(isolatedHome);
+      safeRemoveTempDir(isolatedCwd);
     }
   }
 }

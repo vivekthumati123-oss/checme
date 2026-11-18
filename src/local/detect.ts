@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import picomatch from "picomatch";
 
 import { loadConfig } from "../config";
 import {
@@ -34,7 +35,13 @@ export interface RunLocalDetectOptions {
   wasmDir?: string;
 }
 
-function getLatestSourceMtimeMs(repoRoot: string, workingDir: string, files?: readonly string[]): number {
+function getLatestSourceMtimeMs(
+  repoRoot: string,
+  workingDir: string,
+  sourceGlobs: readonly string[],
+  excludeGlobs: readonly string[],
+  files?: readonly string[],
+): number {
   let latest = 0;
   if (files && files.length > 0) {
     for (const rel of files) {
@@ -46,8 +53,47 @@ function getLatestSourceMtimeMs(repoRoot: string, workingDir: string, files?: re
     return latest;
   }
   const wdAbs = path.resolve(repoRoot, workingDir || ".");
-  if (existsSync(wdAbs)) {
-    latest = Math.max(latest, statSync(wdAbs).mtimeMs);
+  if (!existsSync(wdAbs)) return latest;
+  const srcMatcher = picomatch(
+    sourceGlobs.map((g) => cleanRepoRelative(normalizeSlashes(g))),
+    { dot: true, nocase: process.platform === "win32" },
+  );
+  const excMatcher = picomatch([...excludeGlobs], { dot: true, nocase: process.platform === "win32" });
+  const stack = [wdAbs];
+  let visitedDirs = 0;
+  while (stack.length > 0 && visitedDirs < 1000) {
+    visitedDirs += 1;
+    const cur = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (ent.isSymbolicLink()) continue;
+      if (
+        ent.name === ".git" ||
+        ent.name === "node_modules" ||
+        ent.name === ".unit-agent" ||
+        ent.name === "target" ||
+        ent.name === "build" ||
+        ent.name === "dist"
+      ) {
+        continue;
+      }
+      const full = path.join(cur, ent.name);
+      const repoRel = cleanRepoRelative(normalizeSlashes(path.relative(repoRoot, full)));
+      if (excMatcher(repoRel)) continue;
+      if (ent.isDirectory()) {
+        stack.push(full);
+      } else if (ent.isFile()) {
+        const wdRel = cleanRepoRelative(normalizeSlashes(path.relative(wdAbs, full)));
+        if (srcMatcher(wdRel)) {
+          latest = Math.max(latest, statSync(full).mtimeMs);
+        }
+      }
+    }
   }
   return latest;
 }
@@ -89,6 +135,14 @@ export async function runLocalDetect(opts: RunLocalDetectOptions): Promise<{
   let baseline: BaselineArtifact | undefined;
 
   if (opts.coverageFile) {
+    if (opts.coverageFile.includes("\0") || opts.coverageFile.replace(/\\/g, "/").split("/").includes("..")) {
+      throw new StageError(
+        `Unsafe coverage file path: "${opts.coverageFile}".`,
+        EXIT_CODES.POLICY_OR_HASH,
+        "local",
+        "path_violation",
+      );
+    }
     const covAbs = path.isAbsolute(opts.coverageFile)
       ? opts.coverageFile
       : path.resolve(opts.repoRoot, opts.coverageFile);
@@ -150,7 +204,13 @@ export async function runLocalDetect(opts: RunLocalDetectOptions): Promise<{
           break;
         }
         const covMtime = statSync(covAbs).mtimeMs;
-        const srcMtime = getLatestSourceMtimeMs(opts.repoRoot, lc.workingDirectory, opts.files);
+        const srcMtime = getLatestSourceMtimeMs(
+          opts.repoRoot,
+          lc.workingDirectory,
+          lc.sourceGlobs,
+          config.exclude,
+          opts.files,
+        );
         if (srcMtime > 0 && covMtime < srcMtime) {
           canReuseAll = false;
           break;

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import type { LanguageKey, UnitAgentConfig } from "../contracts";
-import { parseArgvTokens } from "./argv";
+import { parseArgvTokens, tokenizeCommand } from "./argv";
 import { loadConfig } from "./loader";
 import { renderTestPathPattern } from "./templates";
 
@@ -78,15 +78,19 @@ export function runConfigCheck(repoRoot: string, explicitPath?: string): ConfigC
     }
 
     // Double-check command tokenization
-    for (const [field, cmd] of [
-      ["installCommand", lc.installCommand],
-      ["testCommand", lc.testCommand],
-      ["formatCommand", lc.formatCommand],
-      ["lintCommand", lc.lintCommand],
+    for (const [field, cmd, needsFiles] of [
+      ["installCommand", lc.installCommand, false],
+      ["testCommand", lc.testCommand, false],
+      ["formatCommand", lc.formatCommand, true],
+      ["lintCommand", lc.lintCommand, true],
     ] as const) {
       if (!cmd) continue;
       try {
-        parseArgvTokens(cmd);
+        if (needsFiles) {
+          tokenizeCommand(cmd, ["sample.txt"]);
+        } else {
+          parseArgvTokens(cmd);
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         errors.push(`languages.${lang}.${field}: ${msg}`);

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { cleanRepoRelative, normalizeSlashes, toRepoPath } from "../paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../paths";
 import { parseCobertura } from "./cobertura";
 import { parseJacoco } from "./jacoco";
 import { parseLcov, type RawCoverageRecord } from "./lcov";
@@ -30,9 +30,16 @@ function resolveCoverageRecordPath(
   },
 ): string | null {
   const normRaw = normalizeSlashes(rawFilePath.trim());
+  if (!normRaw || normRaw.includes("\0") || normRaw.split("/").includes("..")) {
+    return null;
+  }
   const normalizedKnown = opts.knownSourceFiles?.map((k) => cleanRepoRelative(normalizeSlashes(k))) ?? [];
+  const isRawAbs = path.posix.isAbsolute(normRaw) || /^[A-Za-z]:(?:\/|$)/.test(normRaw);
 
   if (opts.format === "jacoco") {
+    if (isRawAbs) {
+      return null;
+    }
     const candidates = normalizedKnown.filter(
       (k) => k.endsWith(`/${normRaw}`) || k === normRaw || k.endsWith(`src/main/java/${normRaw}`),
     );
@@ -47,19 +54,24 @@ function resolveCoverageRecordPath(
       }
       return candidates[0] ?? null;
     }
+    const wdPrefix = opts.workingDirectory ? cleanRepoRelative(opts.workingDirectory) : "";
     const defaultJavaRel =
-      opts.workingDirectory && opts.workingDirectory !== "."
-        ? `${cleanRepoRelative(opts.workingDirectory)}/src/main/java/${normRaw}`
-        : `src/main/java/${normRaw}`;
-    return cleanRepoRelative(defaultJavaRel);
+      wdPrefix && wdPrefix !== "." ? `${wdPrefix}/src/main/java/${normRaw}` : `src/main/java/${normRaw}`;
+    try {
+      return toRepoPath(defaultJavaRel, opts.repoRoot, {
+        copyRoot: opts.copyRoot,
+        workingDirectory: opts.workingDirectory,
+      });
+    } catch {
+      return null;
+    }
   }
-
-  const isRawAbs = path.posix.isAbsolute(normRaw) || /^[A-Za-z]:\//.test(normRaw);
 
   // For Cobertura reports carrying <sources>, resolve relative filenames against <source>
   // prefixes before falling back to direct repoRoot-relative normalization.
   if (!isRawAbs && opts.sources?.length && !normalizedKnown.includes(cleanRepoRelative(normRaw))) {
     const cleanRaw = cleanRepoRelative(normRaw);
+    const validCandidates: string[] = [];
     for (const srcPrefix of opts.sources) {
       const normSrc = normalizeSlashes(srcPrefix).replace(/\/+$/, "");
       if (!normSrc) continue;
@@ -69,11 +81,17 @@ function resolveCoverageRecordPath(
           copyRoot: opts.copyRoot,
           workingDirectory: opts.workingDirectory,
         });
-        if (normalizedKnown.length === 0 || normalizedKnown.includes(combinedRel)) {
+        if (normalizedKnown.includes(combinedRel)) {
           return combinedRel;
         }
         const suffixFromCombinedRel = normalizedKnown.find((k) => k === combinedRel || k.endsWith(`/${combinedRel}`));
         if (suffixFromCombinedRel) return suffixFromCombinedRel;
+        if (normalizedKnown.length === 0) {
+          if (isSafeRealPathInsideRoot(combinedRel, opts.repoRoot, { requireRegularFileIfExists: true })) {
+            return combinedRel;
+          }
+          validCandidates.push(combinedRel);
+        }
       } catch {
         const cleanCombined = cleanRepoRelative(combined);
         const suffixFromCombined = normalizedKnown.find(
@@ -81,6 +99,9 @@ function resolveCoverageRecordPath(
         );
         if (suffixFromCombined) return suffixFromCombined;
       }
+    }
+    if (normalizedKnown.length === 0 && validCandidates[0]) {
+      return validCandidates[0];
     }
   }
 
@@ -107,10 +128,17 @@ function resolveCoverageRecordPath(
 
   // Fallback for workingDirectory + rawFilePath when raw path carried an unmapped absolute root
   const wd = opts.workingDirectory ? cleanRepoRelative(opts.workingDirectory) : "";
-  if (wd && wd !== "." && !normRaw.startsWith("/")) {
-    const joined = cleanRepoRelative(`${wd}/${normRaw}`);
-    if (normalizedKnown.length === 0 || normalizedKnown.includes(joined)) {
-      return joined;
+  if (wd && wd !== "." && !isRawAbs) {
+    try {
+      const joined = toRepoPath(`${wd}/${normRaw}`, opts.repoRoot, {
+        copyRoot: opts.copyRoot,
+        workingDirectory: opts.workingDirectory,
+      });
+      if (normalizedKnown.length === 0 || normalizedKnown.includes(joined)) {
+        return joined;
+      }
+    } catch {
+      return null;
     }
   }
 

@@ -21,9 +21,13 @@ interface CoberturaPackageNode {
   classes?: { class?: CoberturaClassNode | CoberturaClassNode[] };
 }
 
+interface CoberturaSourceText {
+  "#text"?: string | number;
+}
+
 interface CoberturaRoot {
   coverage?: {
-    sources?: { source?: string | string[] };
+    sources?: { source?: string | CoberturaSourceText | Array<string | CoberturaSourceText> };
     packages?: { package?: CoberturaPackageNode | CoberturaPackageNode[] };
   };
 }
@@ -42,7 +46,12 @@ export function parseCobertura(content: string): CoberturaParsedResult {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "@_",
-    processEntities: false,
+    processEntities: {
+      enabled: true,
+      maxEntityCount: 1000,
+      maxEntitySize: 1024,
+    },
+    parseTagValue: false,
   });
 
   const parsed = parser.parse(content) as CoberturaRoot;
@@ -52,7 +61,13 @@ export function parseCobertura(content: string): CoberturaParsedResult {
   }
 
   const sources = asArray(cov.sources?.source)
-    .map((s) => (typeof s === "string" ? s.trim() : String(s).trim()))
+    .map((s) => {
+      if (typeof s === "string") return s.trim();
+      if (s && typeof s === "object" && "#text" in s && s["#text"] !== undefined) {
+        return String(s["#text"]).trim();
+      }
+      return String(s ?? "").trim();
+    })
     .filter(Boolean);
 
   const byFile = new Map<string, Map<number, number>>();

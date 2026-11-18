@@ -67,6 +67,13 @@ async function main() {
     cpSync(chatTemplatesSrc, path.join(distDir, "templates", "chat"), { recursive: true });
   }
 
+  const offlineScriptSrc = path.join(ROOT, "scripts", "run-offline.sh");
+  if (existsSync(offlineScriptSrc)) {
+    const offlineDestDir = path.join(distDir, "scripts");
+    mkdirSync(offlineDestDir, { recursive: true });
+    cpSync(offlineScriptSrc, path.join(offlineDestDir, "run-offline.sh"));
+  }
+
   // Generate schema/unit-agent.schema.json directly from ConfigSchema without needing tsx at runtime
   const schemaBuild = await build({
     entryPoints: [path.join(ROOT, "src", "contracts", "config.ts")],

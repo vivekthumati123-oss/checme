@@ -22,6 +22,7 @@ export interface RunnerRequest {
   packageName?: string;
   withCoverage: boolean;
   offline: boolean;
+  isFlakeRerun?: boolean;
 }
 
 export interface RunnerOutcome {
@@ -36,23 +37,23 @@ export interface RunnerOutcome {
   failureDetail?: string;
 }
 
-export function shouldUseOfflineWrapper(config: UnitAgentConfig, explicitOffline: boolean): boolean {
-  return (explicitOffline || config.offline.strategy === "unshare") && config.offline.strategy === "unshare";
+export function shouldUseOfflineWrapper(config: UnitAgentConfig, _explicitOffline: boolean): boolean {
+  return config.offline.strategy === "unshare";
 }
 
-export function resolveOfflineScriptPath(repoRoot: string): string {
+export function resolveOfflineScriptPath(_repoRoot?: string): string {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    path.resolve(moduleDir, "scripts", "run-offline.sh"),
     path.resolve(moduleDir, "..", "scripts", "run-offline.sh"),
     path.resolve(moduleDir, "..", "..", "..", "..", "scripts", "run-offline.sh"),
-    path.resolve(repoRoot, "scripts", "run-offline.sh"),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
   }
-  return candidates[1]!;
+  return candidates[2]!;
 }
 
 export function cleanupTempFile(filePath: string): void {

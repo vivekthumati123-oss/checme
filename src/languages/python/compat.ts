@@ -9,7 +9,7 @@ export const PYTHON_TOOLCHAIN_MISMATCH_PATTERNS: readonly RegExp[] = [
   /Ignored the following versions that require a different python/i,
   /No module named pytest/i,
   /No module named coverage/i,
-  /SyntaxError: invalid syntax/,
+  /site-packages[/\\].*SyntaxError: invalid syntax/,
 ];
 
 export function parseMajorMinor(raw: string | null | undefined): { major: number; minor: number } | null {

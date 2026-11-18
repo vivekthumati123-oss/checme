@@ -2,7 +2,6 @@ import path from "node:path";
 
 import { tokenizeCommand } from "../../../../config";
 import type { JavaConfig } from "../../../../contracts";
-import { runCommand } from "../../../../exec/exec";
 import { classifyExecutionFailure } from "../../classify";
 import {
   buildBaseOutcome,
@@ -11,7 +10,7 @@ import {
   type RunnerOutcome,
   type RunnerRequest,
 } from "../common";
-import { collectJavaXmlTestResults, type JavaProjectResolution } from "./detect";
+import { collectJavaXmlTestResults, runJavaCommandWithWrapperHandling, type JavaProjectResolution } from "./detect";
 
 export async function runMavenSingleTest(req: RunnerRequest, proj: JavaProjectResolution): Promise<RunnerOutcome> {
   const javaCfg = req.languageConfig as JavaConfig;
@@ -26,7 +25,7 @@ export async function runMavenSingleTest(req: RunnerRequest, proj: JavaProjectRe
     runArgs.push("test");
   }
   if (proj.moduleRelFromBuildRoot !== "." && !runArgs.includes("-pl")) {
-    runArgs.push("-pl", proj.moduleRelFromBuildRoot, "-am");
+    runArgs.push("-pl", proj.moduleRelFromBuildRoot, "-am", "-DfailIfNoTests=false");
   }
   if (!runArgs.some((a) => a.startsWith("-Dtest="))) {
     runArgs.push(`-Dtest=${testClass}`);
@@ -35,13 +34,18 @@ export async function runMavenSingleTest(req: RunnerRequest, proj: JavaProjectRe
     runArgs.push("-o");
   }
 
-  const execRes = await runCommand(execFile, runArgs, {
+  const { execRes, wrapperUnavailable } = await runJavaCommandWithWrapperHandling({
+    repoRoot: req.repoRoot,
+    file: execFile,
+    args: runArgs,
     cwd: proj.buildRootAbs,
-    timeoutMs: req.config.limits.perRunTestTimeoutSeconds * 1000,
+    workDir: req.workDir,
+    javaConfig: javaCfg,
     config: req.config,
+    timeoutMs: req.config.limits.perRunTestTimeoutSeconds * 1000,
+    killChildrenOnExit: true,
     useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
     offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
-    killChildrenOnExit: true,
   });
 
   const reportsDir = javaCfg.testResultsDir
@@ -50,7 +54,10 @@ export async function runMavenSingleTest(req: RunnerRequest, proj: JavaProjectRe
 
   const tests = collectJavaXmlTestResults(reportsDir, testClass);
   const outcome = buildBaseOutcome(execRes, tests);
-  if (execRes.exitCode !== 0) {
+  if (wrapperUnavailable) {
+    outcome.failureReason = "wrapper_unavailable";
+    outcome.failureDetail = wrapperUnavailable.detail;
+  } else if (execRes.exitCode !== 0) {
     const classified = classifyExecutionFailure(execRes);
     outcome.failureReason = classified.reason;
     outcome.failureDetail = classified.detail;

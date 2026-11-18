@@ -4,28 +4,32 @@ import path from "node:path";
 import { PROVENANCE_HEADER_JS, PROVENANCE_HEADER_PY, hasProvenanceHeader } from "../../config/templates";
 import type { LanguageKey } from "../../contracts";
 
+import { cleanRepoRelative, normalizeSlashes } from "../paths";
+
 export type LineEnding = "\n" | "\r\n";
 
 export function detectGitattributesEol(repoRoot: string, repoRelPath: string): LineEnding | null {
   const attrPath = path.join(repoRoot, ".gitattributes");
   if (!existsSync(attrPath)) return null;
+  const normPath = cleanRepoRelative(normalizeSlashes(repoRelPath));
   const lines = readFileSync(attrPath, "utf8").split(/\r?\n/);
-  const ext = path.posix.extname(repoRelPath);
+  const ext = path.posix.extname(normPath);
+  let resolved: LineEnding | null = null;
   for (const raw of lines) {
     const trimmed = raw.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const parts = trimmed.split(/\s+/);
-    const pattern = parts[0] ?? "";
+    const pattern = normalizeSlashes(parts[0] ?? "").replace(/^\.\//, "");
     const attrs = parts.slice(1);
     const matches =
-      pattern === "*" || (pattern.startsWith("*.") && ext && pattern.slice(1) === ext) || pattern === repoRelPath;
+      pattern === "*" || (pattern.startsWith("*.") && ext && pattern.slice(1) === ext) || pattern === normPath;
     if (!matches) continue;
     for (const a of attrs) {
-      if (a === "eol=crlf") return "\r\n";
-      if (a === "eol=lf") return "\n";
+      if (a === "eol=crlf") resolved = "\r\n";
+      if (a === "eol=lf") resolved = "\n";
     }
   }
-  return null;
+  return resolved;
 }
 
 export function detectPreferredEol(params: {

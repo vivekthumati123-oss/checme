@@ -17,11 +17,13 @@ import {
   type GitHubClientLike,
 } from "../../src/contracts";
 import { sha256Hex } from "../../src/core/context";
+import { parseUnifiedDiff } from "../../src/core/git";
 import { toRepoPath } from "../../src/core/paths";
 import { runStaticPolicyCheck } from "../../src/core/policy";
 import { buildChildEnv, runCommand } from "../../src/exec/exec";
 import { resolveGitHubTokensFromEnv } from "../../src/github";
 import { FakeLlmClient } from "../../src/llm/fake-client";
+import { runLocalApply } from "../../src/local/apply";
 import { cleanupLeftoverPlacedFiles, recordPlacedFile } from "../../src/local/placement";
 import { runCommit } from "../../src/stages/commit";
 import { runGenerate } from "../../src/stages/generate";
@@ -608,7 +610,7 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
     // .cmd execution on Windows without shell (or .sh on POSIX)
     if (process.platform === "win32") {
       writeFileSync(path.join(dir, "hello.cmd"), "@echo off\r\necho WIN_CMD_OK\r\n", "utf8");
-      const cmdRes = await runCommand("hello.cmd", [], { cwd: dir });
+      const cmdRes = await runCommand("./hello.cmd", [], { cwd: dir });
       expect(cmdRes.exitCode).toBe(0);
       expect(cmdRes.stdout).toContain("WIN_CMD_OK");
     }
@@ -994,5 +996,171 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
       if (prevPat === undefined) delete process.env.COMMIT_PAT;
       else process.env.COMMIT_PAT = prevPat;
     }
+  });
+
+  it("14. blocks obfuscated AST policy bypasses, markdown link/HTML injection, fake diff headers, and symlink targets in local apply", async () => {
+    const jsConcatImport = await runStaticPolicyCheck({
+      language: "javascript",
+      testPath: "test/bypass.test.ts",
+      content: [
+        'import { expect, it } from "vitest";',
+        'it("bypasses", () => {',
+        "  const cp = require('child' + '_process');",
+        '  const x = (0, eval)("1+1");',
+        "  const { env } = process;",
+        "  expect(Boolean(cp && x && env)).toBe(true);",
+        "});",
+      ].join("\n"),
+    });
+    expect(jsConcatImport.ok).toBe(false);
+    expect(jsConcatImport.violations.some((v) => v.rule === "banned_import" || v.rule === "banned_call")).toBe(true);
+
+    const pyAlias = await runStaticPolicyCheck({
+      language: "python",
+      testPath: "tests/test_bypass.py",
+      content: ["import builtins as b", "def test_alias():", "    assert (b.eval)('1+1') == 2"].join("\n"),
+    });
+    expect(pyAlias.ok).toBe(false);
+
+    const javaReflect = await runStaticPolicyCheck({
+      language: "java",
+      testPath: "src/test/java/com/acme/BypassTest.java",
+      content: [
+        "import org.junit.jupiter.api.Test;",
+        "import static org.junit.jupiter.api.Assertions.assertTrue;",
+        "class BypassTest extends ClassLoader {",
+        '  @Test void t() throws Exception { assertTrue(Class.forName("java.lang.Runtime") != null); }',
+        "}",
+      ].join("\n"),
+    });
+    expect(javaReflect.ok).toBe(false);
+
+    const md = sanitizeForMarkdown(
+      "[click](https://evil.example/x)<script>alert(1)</script> <HOME>/src https://bare.example",
+    );
+    expect(md).toContain("HOME");
+    expect(md).not.toContain("<script>");
+    expect(md).not.toContain("https://evil.example");
+    expect(md).not.toContain("https://bare.example");
+
+    const spoofedDiff = [
+      "diff --git a/src/real.ts b/src/real.ts",
+      "--- a/src/real.ts",
+      "+++ b/src/real.ts",
+      "@@ -1,1 +1,2 @@",
+      " export const a = 1;",
+      "+// diff --git a/src/spoofed.ts b/src/spoofed.ts",
+    ].join("\n");
+    const parsedDiff = parseUnifiedDiff(spoofedDiff);
+    expect(Object.keys(parsedDiff)).toEqual(["src/real.ts"]);
+
+    // local apply refuses junction/symlink directory escape and missing provenance header
+    const repo = makeTempDir("ua-sec-apply-sym-");
+    const outsideDir = makeTempDir("ua-sec-apply-out-");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    mkdirSync(path.join(repo, "test"), { recursive: true });
+    const srcContent = "export const a = (x: number) => x + 1;\n";
+    writeFileSync(path.join(repo, "src", "a.ts"), srcContent, "utf8");
+    let linked: boolean;
+    try {
+      symlinkSync(outsideDir, path.join(repo, "test", "linked"), process.platform === "win32" ? "junction" : "dir");
+      linked = true;
+    } catch {
+      linked = false;
+    }
+
+    const workDir = path.join(repo, ".unit-agent");
+    mkdirSync(path.join(workDir, ARTIFACTS.prepare.dir), { recursive: true });
+    mkdirSync(path.join(workDir, ARTIFACTS.validate1.dir), { recursive: true });
+    const badTest = 'import { expect, it } from "vitest";\nit("t", () => expect(1).toBe(1));\n';
+    const goodTest = `// unit-agent:generated\n${badTest}`;
+    const testRel = linked ? "test/linked/a.test.ts" : "test/a.test.ts";
+    mkdirSync(path.join(workDir, ARTIFACTS.final.dir, "validated", path.dirname(testRel)), { recursive: true });
+    writeFileSync(path.join(workDir, ARTIFACTS.final.dir, "validated", testRel), linked ? goodTest : badTest, "utf8");
+
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      policy: { provenanceHeader: true },
+      languages: {
+        javascript: {
+          framework: "vitest",
+          testCommand: "npx vitest run",
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.{ext}"],
+        },
+      },
+    });
+    writeFileSync(
+      path.join(workDir, ARTIFACTS.prepare.dir, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        runId: "r-sec",
+        repo: "org/repo",
+        pr: 1,
+        baseSha: "b1",
+        headSha: "h1",
+        createdAt: new Date().toISOString(),
+        baseline: { status: "no_coverage", perLanguage: {}, patchCoveragePct: null },
+        warnings: [],
+        skipped: [],
+        files: [
+          {
+            fileId: "f1",
+            language: "javascript",
+            path: "src/a.ts",
+            testPath: testRel,
+            importHint: "../src/a",
+            contextPath: "contexts/f1.json",
+            sourceSha256: sha256Hex(srcContent),
+            symbols: [
+              {
+                symbolId: "src/a.ts#a",
+                qualifiedName: "a",
+                kind: "function",
+                signature: "a(x)",
+                range: { startLine: 1, endLine: 1 },
+                executableLines: 1,
+                coveredLines: 0,
+                coveragePct: 0,
+                changedLines: [1],
+                complexity: 1,
+                score: 5,
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      path.join(workDir, ARTIFACTS.validate1.dir, "report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        attempt: 1,
+        workspace: "copy",
+        environment: null,
+        patchCoverage: { beforePct: null, projectedPct: null },
+        toolVersions: { agentNode: process.versions.node, languages: {}, warnings: [] },
+        notes: [],
+        files: [
+          {
+            fileId: "f1",
+            testPath: testRel,
+            outcome: "accepted",
+            gates: [{ gate: "path", status: "pass" }],
+            tests: [{ name: "t", status: "pass" }],
+            sha256: sha256Hex(linked ? goodTest : badTest),
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const applyRes = await runLocalApply({ repoRoot: repo, workDir, config: cfg, confirm: true });
+    expect(applyRes.exitCode).toBe(EXIT_CODES.POLICY_OR_HASH);
+    expect(applyRes.summary.refused[0]?.reason).toBe("policy");
+    expect(existsSync(path.join(outsideDir, "a.test.ts"))).toBe(false);
   });
 });

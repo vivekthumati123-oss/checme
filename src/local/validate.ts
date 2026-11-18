@@ -15,7 +15,7 @@ import {
   type ValidatedFileReport,
 } from "../contracts";
 import { sha256Hex } from "../core/context";
-import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../core/paths";
 import { runValidate } from "../stages/validate";
 import { cleanupLeftoverPlacedFiles } from "./placement";
 
@@ -85,6 +85,18 @@ export async function runLocalValidate(opts: RunLocalValidateOptions): Promise<L
   const missingReports: ValidatedFileReport[] = [];
 
   for (const rel of stagedFiles) {
+    if (!isSafeRealPathInsideRoot(rel, stagingAbs, { requireRegularFileIfExists: true })) {
+      unmatchedReports.push({
+        fileId: "unmatched",
+        testPath: rel,
+        outcome: "rejected",
+        reason: "path_violation",
+        gates: [{ gate: "path", status: "fail", detail: `Staged file "${rel}" is a symlink or outside staging root.` }],
+        tests: [],
+        sha256: null,
+      });
+      continue;
+    }
     const mf = manifestByTestPath.get(rel);
     if (!mf) {
       unmatchedReports.push({
@@ -173,11 +185,15 @@ export async function runLocalValidate(opts: RunLocalValidateOptions): Promise<L
   const summaryFiles: LocalValidateSummary["files"] = allReportFiles.map((fr) => {
     let outputTail: string | undefined;
     if (fr.outcome !== "accepted" && fr.outcome !== "accepted_pruned") {
-      if (fr.logPath && existsSync(path.join(opts.workDir, fr.logPath))) {
+      if (
+        fr.logPath &&
+        isSafeRealPathInsideRoot(fr.logPath, opts.workDir, { requireRegularFileIfExists: true }) &&
+        existsSync(path.join(opts.workDir, fr.logPath))
+      ) {
         outputTail = readFileSync(path.join(opts.workDir, fr.logPath), "utf8").slice(-1200);
       } else {
         const failGate = fr.gates.find((g) => g.status === "fail");
-        if (failGate?.detail) outputTail = failGate.detail.slice(0, 1200);
+        if (failGate?.detail) outputTail = failGate.detail.slice(-1200);
       }
     }
     return {
@@ -202,6 +218,8 @@ export async function runLocalValidate(opts: RunLocalValidateOptions): Promise<L
     next = "Fix failing drafts in stagingDir and run `local validate` again.";
   } else if (hasAccepted) {
     next = "Present validation summary to user and run `local apply --confirm` after explicit approval.";
+  } else if (unmatchedReports.length > 0 || missingReports.length > 0) {
+    next = "Place drafts matching manifest targets under stagingDir and run `local validate` again.";
   }
 
   return LocalValidateSummarySchema.parse({
@@ -212,7 +230,7 @@ export async function runLocalValidate(opts: RunLocalValidateOptions): Promise<L
     environmentError: valRes.report.environment
       ? {
           command: valRes.report.environment.command,
-          outputTail: valRes.report.environment.outputTail,
+          outputTail: valRes.report.environment.outputTail.slice(-1500),
         }
       : null,
     files: summaryFiles,

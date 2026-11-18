@@ -1,11 +1,16 @@
 import { z } from "zod";
 
-import { isArgvOnly } from "../config/argv";
+import { isArgvOnly, parseArgvTokens } from "../config/argv";
 
-const NO_TRAVERSAL_MSG = "path must not contain '..' traversal segments";
-const hasNoTraversal = (value: string): boolean => !value.replace(/\\/g, "/").split("/").includes("..");
+const NO_TRAVERSAL_MSG = "path must not contain '..' traversal segments or absolute/UNC/drive/NUL paths";
+const isSafeRelativePath = (value: string): boolean => {
+  if (value.includes("\0")) return false;
+  const slash = value.replace(/\\/g, "/");
+  if (slash.startsWith("/") || /^[A-Za-z]:/.test(slash) || /^\\\\/.test(value)) return false;
+  return !slash.split("/").includes("..");
+};
 
-const SafePath = z.string().min(1).refine(hasNoTraversal, NO_TRAVERSAL_MSG);
+const SafePath = z.string().min(1).refine(isSafeRelativePath, NO_TRAVERSAL_MSG);
 
 const Cmd = z
   .string()
@@ -14,7 +19,13 @@ const Cmd = z
     "no shell operators (&&, ||, |, ;, >, <, backticks, $()). Put multi-step logic in an npm script or a script file.",
   );
 
-const FilesCmd = Cmd.refine((s) => s.includes("{files}"), "must contain {files}");
+const FilesCmd = Cmd.refine((s) => {
+  try {
+    return parseArgvTokens(s).includes("{files}");
+  } catch {
+    return false;
+  }
+}, "must contain standalone {files} token");
 
 export const FrameworkEnum = z.enum(["auto", "jest", "vitest", "pytest", "junit5"], {
   error:
@@ -150,7 +161,14 @@ export const CommitConfigSchema = z
 export const LocalConfigSchema = z
   .object({
     baseRef: z.string().min(1).optional(),
-    stagingDir: SafePath.default(".unit-agent/chat/proposed"),
+    stagingDir: SafePath.refine(
+      (v) =>
+        v
+          .replace(/\\/g, "/")
+          .replace(/\/+$/, "")
+          .replace(/^(?:\.\/)+/, "") !== "." && v.replace(/[\\/.]/g, "").length > 0,
+      "stagingDir must name a subdirectory inside the repository",
+    ).default(".unit-agent/chat/proposed"),
     maxRepairIterations: z.number().int().min(0).max(3).default(2),
     reuseCoverage: z.boolean().default(true),
     confirmBeforeRun: z.boolean().default(true),

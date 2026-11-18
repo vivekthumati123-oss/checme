@@ -15,7 +15,7 @@ import {
 } from "../contracts";
 import { runCommand } from "../exec/exec";
 import { matchToolchainMismatch } from "../languages/toolchains";
-import { sanitizeFailureOutput } from "../telemetry";
+import { sanitizeFailureOutput, writeGitHubOutput } from "../telemetry";
 import { runJavaCommandWithWrapperHandling } from "./validate/runners/java/detect";
 
 export interface RunInstallOptions {
@@ -26,6 +26,7 @@ export interface RunInstallOptions {
   planPath?: string;
   plan?: PlanOutput;
   logger?: LoggerLike;
+  writeOutputs?: boolean;
 }
 
 export interface InstallLanguageOutcome {
@@ -82,6 +83,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
         cwd,
         timeoutMs: config.limits.runTimeoutMinutes * 60_000,
         config,
+        killChildrenOnExit: true,
       });
     }
     const durationMs = Date.now() - startMs;
@@ -91,9 +93,21 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
       throw new StageError(wrapperUnavailable.detail, EXIT_CODES.CONFIG_OR_INPUT, "prepare", "wrapper_unavailable");
     }
 
+    if (res.timedOut) {
+      const msg = `Install timed out for ${lang} after ${config.limits.runTimeoutMinutes} minutes.`;
+      opts.logger?.error({ language: lang, timeoutMinutes: config.limits.runTimeoutMinutes }, msg);
+      throw new StageError(msg, EXIT_CODES.INTERNAL, "prepare", "install_timeout");
+    }
+
+    if (res.spawnError) {
+      const msg = `Install tool could not be launched for ${lang}: ${res.spawnError}`;
+      opts.logger?.error({ language: lang, spawnError: res.spawnError }, msg);
+      throw new StageError(msg, EXIT_CODES.CONFIG_OR_INPUT, "prepare", "tool_missing");
+    }
+
     if (res.exitCode !== 0) {
       const combined = `${res.stdout}\n${res.stderr}`;
-      const mismatch = matchToolchainMismatch(combined);
+      const mismatch = matchToolchainMismatch(combined, lang);
       const cleanTail = sanitizeFailureOutput(combined, { repoRoot: opts.repoRoot });
       opts.logger?.error({ language: lang, exitCode: res.exitCode, mismatch }, "Install command failed");
       throw new StageError(
@@ -109,6 +123,12 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
       ran: true,
       exitCode: res.exitCode,
       durationMs,
+    });
+  }
+
+  if (opts.writeOutputs !== false) {
+    writeGitHubOutput({
+      status: "ok",
     });
   }
 

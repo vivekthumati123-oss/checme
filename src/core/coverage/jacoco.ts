@@ -20,6 +20,7 @@ interface JacocoPackageNode {
 
 interface JacocoGroupNode {
   package?: JacocoPackageNode | JacocoPackageNode[];
+  group?: JacocoGroupNode | JacocoGroupNode[];
 }
 
 interface JacocoRoot {
@@ -34,11 +35,19 @@ function asArray<T>(val: T | T[] | undefined): T[] {
   return Array.isArray(val) ? val : [val];
 }
 
+function collectPackagesFromGroup(group: JacocoGroupNode, out: JacocoPackageNode[]): void {
+  out.push(...asArray(group.package));
+  for (const childGroup of asArray(group.group)) {
+    collectPackagesFromGroup(childGroup, out);
+  }
+}
+
 export function parseJacoco(content: string): RawCoverageRecord[] {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "@_",
     processEntities: false,
+    parseTagValue: false,
   });
 
   const parsed = parser.parse(content) as JacocoRoot;
@@ -47,7 +56,7 @@ export function parseJacoco(content: string): RawCoverageRecord[] {
 
   const packages: JacocoPackageNode[] = [...asArray(report.package)];
   for (const grp of asArray(report.group)) {
-    packages.push(...asArray(grp.package));
+    collectPackagesFromGroup(grp, packages);
   }
 
   const byFile = new Map<string, Map<number, number>>();

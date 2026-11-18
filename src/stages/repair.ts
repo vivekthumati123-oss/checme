@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   ARTIFACTS,
+  AuthError,
   EXIT_CODES,
   FailuresSchema,
   FileContextSchema,
@@ -16,6 +17,7 @@ import {
   type UnitAgentConfig,
 } from "../contracts";
 import { sha256Hex } from "../core/context";
+import { isSafeRealPathInsideRoot } from "../core/paths";
 import { formatGeneratedTestContent } from "../core/text/eol";
 import { CopilotSdkTestClient, FakeLlmClient, type LlmTestClient } from "../llm";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
@@ -77,7 +79,7 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
   }
 
   const repairedFiles: ProposedFile[] = [];
-  let requestsUsed = 0;
+  let requestsUsed = proposed.files.reduce((sum, f) => sum + (f.usage?.requests ?? 0), 0);
 
   if (failures.files.length === 0 || config.limits.repairAttempts === 0 || opts.dryRun) {
     const emptyRepaired = ProposedSchema.parse({
@@ -111,21 +113,38 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
   const proposedById = new Map(proposed.files.map((f) => [f.fileId, f]));
 
   for (const failEntry of failures.files) {
-    if (requestsUsed >= config.limits.maxRequestsPerRun) {
-      opts.logger?.warn({ fileId: failEntry.fileId }, "Request budget reached during repair");
-      break;
-    }
-
     const mf = manifestById.get(failEntry.fileId);
     const prevPf = proposedById.get(failEntry.fileId);
     if (!mf || !prevPf) continue;
 
+    if (requestsUsed >= config.limits.maxRequestsPerRun) {
+      opts.logger?.warn({ fileId: failEntry.fileId }, "Request budget reached during repair");
+      repairedFiles.push({
+        fileId: mf.fileId,
+        testPath: mf.testPath,
+        content: "",
+        sha256: "",
+        symbolIds: prevPf.symbolIds,
+        assumptions: [],
+        status: "over_request_budget",
+        error: `Exceeds limits.maxRequestsPerRun (${config.limits.maxRequestsPerRun}).`,
+      });
+      continue;
+    }
+
+    if (!isSafeRealPathInsideRoot(mf.contextPath, prepareDir, { requireRegularFileIfExists: true })) {
+      throw new StageError(
+        `Unsafe context path "${mf.contextPath}" for fileId "${mf.fileId}".`,
+        EXIT_CODES.POLICY_OR_HASH,
+        "repair",
+        "path_violation",
+      );
+    }
     const ctxPath = path.join(prepareDir, mf.contextPath);
     if (!existsSync(ctxPath)) continue;
     const ctx = FileContextSchema.parse(JSON.parse(readFileSync(ctxPath, "utf8")));
 
     const startMs = Date.now();
-    requestsUsed += 1;
 
     try {
       const res = await client.repairTests({
@@ -138,9 +157,13 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
         },
         attempt: 2,
       });
+      requestsUsed += res.requestsUsed;
 
       const srcAbs = path.join(opts.repoRoot, mf.path);
-      const refSrc = existsSync(srcAbs) ? readFileSync(srcAbs, "utf8") : ctx.sourceFile.content;
+      const refSrc =
+        isSafeRealPathInsideRoot(mf.path, opts.repoRoot, { requireRegularFileIfExists: true }) && existsSync(srcAbs)
+          ? readFileSync(srcAbs, "utf8")
+          : ctx.sourceFile.content;
       const formatted = formatGeneratedTestContent({
         content: res.submission.content,
         language: mf.language,
@@ -160,13 +183,17 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
         assumptions: res.submission.assumptions,
         status: "ok",
         usage: {
-          requests: 1,
+          requests: res.requestsUsed,
           inputChars: prevPf.content.length + failEntry.output.length,
           outputChars: formatted.length,
           ms: Date.now() - startMs,
         },
       });
     } catch (err) {
+      if (err instanceof AuthError) {
+        throw err;
+      }
+      requestsUsed += 1;
       const msg = err instanceof Error ? err.message : String(err);
       repairedFiles.push({
         fileId: mf.fileId,
@@ -177,6 +204,12 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
         assumptions: [],
         status: "generation_failed",
         error: msg,
+        usage: {
+          requests: 1,
+          inputChars: prevPf.content.length + failEntry.output.length,
+          outputChars: 0,
+          ms: Date.now() - startMs,
+        },
       });
     }
   }

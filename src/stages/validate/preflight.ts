@@ -195,7 +195,7 @@ export async function probeTestRunner(params: {
   if (baseName === "python" || baseName === "python3" || baseName === "py") {
     const mIdx = args.indexOf("-m");
     if (mIdx >= 0 && mIdx + 1 < args.length) {
-      const preMArgs = args.slice(0, mIdx).filter((a) => a.startsWith("-"));
+      const preMArgs = args.slice(0, mIdx);
       const mod = args[mIdx + 1]!;
       const modProbeArgs =
         mod === "pytest"

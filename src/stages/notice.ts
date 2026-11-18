@@ -8,6 +8,7 @@ import {
   type GitHubClientLike,
   type StageStatus,
 } from "../contracts";
+import { upsertUnitAgentComment } from "../github";
 import { sanitizeForMarkdown, sanitizeOutput, writeStepSummary } from "../telemetry";
 
 const GUARD_SKIP_REASONS = new Set<string>([
@@ -267,7 +268,10 @@ export function buildNoticeMarkdown(params: {
       ? ` via \`${sanitizeCodeSpan(params.baseline.command, 160, params.repoRoot)}\``
       : "";
     const exitPart = typeof params.baseline.exitCode === "number" ? ` (exit code ${params.baseline.exitCode})` : "";
-    lines.push(`- **Baseline:** red${cmdPart}${exitPart}`);
+    const mismatchPart = params.baseline.mismatchReason
+      ? ` [\`${sanitizeCodeSpan(params.baseline.mismatchReason, 80, params.repoRoot)}\`]`
+      : "";
+    lines.push(`- **Baseline:** red${cmdPart}${exitPart}${mismatchPart}`);
     if (params.baseline.summary) {
       lines.push(
         `  - ${sanitizeForMarkdown(params.baseline.summary, 300, params.repoRoot ? { repoRoot: params.repoRoot } : undefined)}`,
@@ -335,7 +339,12 @@ function resolveNoticeReason(params: {
   const primaryStatusReason = params.statuses.find(
     (s) => s.status !== "ok" && !(s.stage === "prepare" && s.reason === "no_targets") && Boolean(s.reason),
   )?.reason;
-  if (primaryStatusReason) return primaryStatusReason;
+  if (primaryStatusReason) {
+    if (primaryStatusReason === "baseline_red" && params.baseline?.mismatchReason) {
+      return params.baseline.mismatchReason;
+    }
+    return primaryStatusReason;
+  }
 
   const firstPlanSkipped = params.plan?.skipped[0];
   if (firstPlanSkipped) {
@@ -353,8 +362,12 @@ function resolveNoticeReason(params: {
 }
 
 export async function runNotice(opts: RunNoticeOptions): Promise<string> {
-  const statuses = readStatuses(opts.workDir);
-  const { plan, manifest, baseline } = readOptionalArtifacts(opts.workDir);
+  const explicitReason = opts.reason?.trim() || opts.skipReason?.trim();
+  const isExplicitGuardSkip = Boolean(explicitReason && GUARD_SKIP_REASONS.has(explicitReason));
+  const statuses = isExplicitGuardSkip ? [] : readStatuses(opts.workDir);
+  const { plan, manifest, baseline } = isExplicitGuardSkip
+    ? { plan: undefined, manifest: undefined, baseline: undefined }
+    : readOptionalArtifacts(opts.workDir);
 
   const reason = resolveNoticeReason({
     explicitReason: opts.reason,
@@ -383,14 +396,13 @@ export async function runNotice(opts: RunNoticeOptions): Promise<string> {
   if (shouldPostPrComment && opts.github && opts.repoFullName) {
     const [owner = "", repo = ""] = opts.repoFullName.split("/");
     if (owner && repo) {
-      const marker = `<!-- unit-agent:summary v1 pr=${prNum} -->`;
-      const existing = await opts.github.listIssueComments(owner, repo, prNum);
-      const found = existing.find((c) => c.body.includes(marker));
-      if (found) {
-        await opts.github.updateIssueComment(owner, repo, found.id, markdown);
-      } else {
-        await opts.github.createIssueComment(owner, repo, prNum, markdown);
-      }
+      await upsertUnitAgentComment({
+        github: opts.github,
+        owner,
+        repo,
+        pr: prNum,
+        body: markdown,
+      });
     }
   }
 

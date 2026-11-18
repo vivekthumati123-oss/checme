@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+
 import type { LanguageConfig, ManifestFile, UnitAgentConfig } from "../../contracts";
 import {
   computePatchCoverage,
@@ -13,15 +16,57 @@ export interface FileCoverageEvaluation {
   afterMap: CoverageLineMap | null;
 }
 
+function mergeFileLineCoverage(
+  baseLines: Map<number, number> | undefined,
+  newLines: Map<number, number> | undefined,
+): Map<number, number> | undefined {
+  if (!baseLines && !newLines) return undefined;
+  const merged = new Map<number, number>();
+  if (baseLines) {
+    for (const [ln, hits] of baseLines.entries()) merged.set(ln, hits);
+  }
+  if (newLines) {
+    for (const [ln, hits] of newLines.entries()) merged.set(ln, Math.max(merged.get(ln) ?? 0, hits));
+  }
+  return merged;
+}
+
+function resolveCoverageFilePathForModule(
+  workspaceRoot: string,
+  langConfig: LanguageConfig,
+  manifestFile: ManifestFile,
+): string {
+  const configuredAbs = path.resolve(workspaceRoot, langConfig.coverageFile);
+  if (existsSync(configuredAbs) || manifestFile.language !== "java") {
+    return langConfig.coverageFile;
+  }
+  const srcMarker = manifestFile.path.indexOf("/src/");
+  if (srcMarker > 0) {
+    const moduleRel = manifestFile.path.slice(0, srcMarker);
+    const covBase = langConfig.coverageFile.replace(/^\.\//, "");
+    const candidate = `${moduleRel}/${covBase}`;
+    if (existsSync(path.join(workspaceRoot, candidate))) {
+      return candidate;
+    }
+  }
+  return langConfig.coverageFile;
+}
+
 export function evaluateFileCoverageGain(params: {
   workspaceRoot: string;
   isCopy: boolean;
   langConfig: LanguageConfig;
   manifestFile: ManifestFile;
   knownSourceFiles: readonly string[];
+  baselineMap?: CoverageLineMap | null;
 }): FileCoverageEvaluation {
+  const effectiveCovFile = resolveCoverageFilePathForModule(
+    params.workspaceRoot,
+    params.langConfig,
+    params.manifestFile,
+  );
   const afterMap = parseCoverageFile({
-    filePath: params.langConfig.coverageFile,
+    filePath: effectiveCovFile,
     format: params.langConfig.coverageFormat,
     repoRoot: params.workspaceRoot,
     workingDirectory: params.langConfig.workingDirectory,
@@ -42,7 +87,9 @@ export function evaluateFileCoverageGain(params: {
     };
   }
 
-  const fileCov = afterMap.get(params.manifestFile.path);
+  const baseFileCov = params.baselineMap?.get(params.manifestFile.path);
+  const afterFileCov = afterMap.get(params.manifestFile.path);
+  const unionFileCov = mergeFileLineCoverage(baseFileCov, afterFileCov);
   const symbolResults: Array<{ symbolId: string; beforePct: number; afterPct: number }> = [];
   let gainedLines = 0;
 
@@ -65,7 +112,7 @@ export function evaluateFileCoverageGain(params: {
         },
       ],
       changedLines: new Set(sym.changedLines),
-      lineCoverage: fileCov,
+      lineCoverage: unionFileCov,
     })[0];
 
     const afterPct = mapped && !mapped.estimated ? mapped.coveragePct : sym.coveragePct;

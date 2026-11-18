@@ -12,6 +12,7 @@ import {
 } from "../../src/languages/toolchains";
 import { runBaseline } from "../../src/stages/baseline";
 import { runDetect } from "../../src/stages/detect";
+import { runInstall } from "../../src/stages/install";
 import { runNotice } from "../../src/stages/notice";
 import { runPlan } from "../../src/stages/plan";
 import { resolveOfflineScriptPath } from "../../src/stages/validate/runners";
@@ -326,5 +327,88 @@ describe("plan, baseline, and detect end-to-end on real git repo", () => {
       dryRun: true,
     });
     expect(md).toContain("toolchain_mismatch");
+  });
+
+  it("skips languages with unsupported toolchain versions (e.g., Python 3.8) in plan stage", async () => {
+    const repo = makeTempDir();
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, ".python-version"), "3.8\n", "utf8");
+    writeFileSync(path.join(repo, "src", "app.py"), "def fn(x: int) -> int:\n    return x + 1\n", "utf8");
+
+    await runCommand("git", ["init", "-q"], { cwd: repo });
+    await runCommand("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    await runCommand("git", ["config", "user.name", "Test"], { cwd: repo });
+    await runCommand("git", ["add", "."], { cwd: repo });
+    await runCommand("git", ["commit", "-q", "-m", "base"], { cwd: repo });
+    const baseSha = (await runCommand("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+
+    writeFileSync(path.join(repo, "src", "app.py"), "def fn(x: int) -> int:\n    return x + 2\n", "utf8");
+    await runCommand("git", ["add", "."], { cwd: repo });
+    await runCommand("git", ["commit", "-q", "-m", "feat"], { cwd: repo });
+    const headSha = (await runCommand("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      languages: {
+        python: {
+          enabled: true,
+          testCommand: "pytest",
+          coverageFile: "coverage.xml",
+          coverageFormat: "cobertura",
+          sourceGlobs: ["src/**/*.py"],
+          testPathPatterns: ["tests/test_{name}.py"],
+        },
+      },
+    });
+    const planRes = await runPlan({
+      repoRoot: repo,
+      workDir: path.join(repo, ".unit-agent"),
+      config: cfg,
+      baseSha,
+      headSha,
+      writeOutputs: false,
+    });
+    expect(planRes.plan.languages).toEqual([]);
+    expect(planRes.plan.skipped).toContainEqual({
+      language: "python",
+      reason: "unsupported_tool_version",
+      found: "3.8",
+    });
+
+    // Verify install and baseline emit status=ok to GITHUB_OUTPUT for workflow step gates
+    const ghOut = path.join(repo, "github-output.txt");
+    const prevOut = process.env.GITHUB_OUTPUT;
+    process.env.GITHUB_OUTPUT = ghOut;
+    try {
+      const jsCfg = ConfigSchema.parse({
+        version: 1,
+        baseline: { mode: "skip" },
+        languages: {
+          javascript: {
+            enabled: true,
+            testCommand: 'node -e "process.exit(0)"',
+            coverageFile: "coverage/lcov.info",
+            coverageFormat: "lcov",
+            sourceGlobs: ["src/**/*.js"],
+            testPathPatterns: ["test/{name}.test.js"],
+          },
+        },
+      });
+      const jsPlan = {
+        schemaVersion: 1 as const,
+        languages: ["javascript" as const],
+        toolchains: {},
+        frameworks: {},
+        skipped: [],
+        warnings: [],
+      };
+      await runInstall({ repoRoot: repo, workDir: path.join(repo, ".unit-agent"), config: jsCfg, plan: jsPlan });
+      await runBaseline({ repoRoot: repo, workDir: path.join(repo, ".unit-agent"), config: jsCfg, plan: jsPlan });
+      const outText = readFileSync(ghOut, "utf8");
+      expect(outText.match(/^status=ok$/gm)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (prevOut === undefined) delete process.env.GITHUB_OUTPUT;
+      else process.env.GITHUB_OUTPUT = prevOut;
+    }
   });
 });

@@ -1,4 +1,4 @@
-import type { FrameworkName } from "../../contracts";
+import { ENVIRONMENT_FAILURE_REASONS, type FailureReason, type FrameworkName } from "../../contracts";
 import type { RunnerRequest, RunnerTestCase } from "./runners";
 import { runSingleFileTests } from "./runners";
 
@@ -6,6 +6,12 @@ export interface FlakeCheckOutcome {
   ok: boolean;
   flakyTestNames: string[];
   runsExecuted: number;
+  environmentFailure?: {
+    reason: FailureReason;
+    detail: string;
+    command: string;
+    output: string;
+  };
 }
 
 export async function runFlakeCheck(params: {
@@ -27,7 +33,23 @@ export async function runFlakeCheck(params: {
     const res = await runSingleFileTests(params.framework, {
       ...params.req,
       withCoverage: false,
+      isFlakeRerun: true,
     });
+
+    if (res.timedOut || (res.failureReason && ENVIRONMENT_FAILURE_REASONS.has(res.failureReason))) {
+      const reason: FailureReason = res.timedOut ? "timeout" : (res.failureReason ?? "environment_error");
+      return {
+        ok: false,
+        flakyTestNames: [],
+        runsExecuted: executed,
+        environmentFailure: {
+          reason,
+          detail: res.failureDetail ?? "Runner encountered an environment failure during flake verification.",
+          command: res.commandString,
+          output: `${res.stdout}\n${res.stderr}`,
+        },
+      };
+    }
 
     if (res.exitCode !== 0) {
       const failedInRun: RunnerTestCase[] = res.tests.filter((t) => t.status === "fail");

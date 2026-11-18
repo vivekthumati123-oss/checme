@@ -34,6 +34,13 @@ export function buildUnifiedNewFilePatch(entries: Array<{ path: string; content:
   return diffBlocks.join("\n");
 }
 
+export function isStaleHeadCommitError(err: unknown): boolean {
+  const status = (err as { status?: number } | undefined)?.status;
+  if (status === 409) return true;
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  return /expectedheadoid|expected head|not up to date|is at [0-9a-f]{7,40} but expected|head.*changed/.test(msg);
+}
+
 export function isBranchProtectionOrPermissionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
   // Only genuine branch-protection / ruleset / integration-permission refusals fall back to a patch.

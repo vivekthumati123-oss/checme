@@ -33,6 +33,9 @@ export function parseJsJsonReport(filePath: string): RunnerTestCase[] {
     const cases: RunnerTestCase[] = [];
     for (const suite of parsed.testResults ?? []) {
       for (const a of suite.assertionResults ?? []) {
+        if (a.status === "pending" || a.status === "skipped" || a.status === "todo") {
+          continue;
+        }
         const name = a.title ?? a.fullName ?? "unnamed";
         cases.push({
           name,

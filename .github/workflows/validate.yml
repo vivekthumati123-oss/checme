@@ -66,30 +66,33 @@ jobs:
           name: "${{ inputs.input-artifact }}"
           path: ".unit-agent/${{ inputs.input-dir }}"
       - uses: actions/setup-node@v4
-        if: contains(fromJSON(inputs.languages), 'javascript') && fromJSON(inputs.toolchains).node.source != 'runner-default'
+        if: inputs.languages != '' && inputs.toolchains != '' && contains(fromJSON(inputs.languages), 'javascript') && fromJSON(inputs.toolchains).node.source != 'runner-default'
         with:
           node-version: ${{ fromJSON(inputs.toolchains).node.version }}
           node-version-file: ${{ fromJSON(inputs.toolchains).node.file }}
       - uses: actions/setup-python@v5
-        if: contains(fromJSON(inputs.languages), 'python') && fromJSON(inputs.toolchains).python.source != 'runner-default'
+        if: inputs.languages != '' && inputs.toolchains != '' && contains(fromJSON(inputs.languages), 'python') && fromJSON(inputs.toolchains).python.source != 'runner-default'
         with:
           python-version: ${{ fromJSON(inputs.toolchains).python.version }}
           python-version-file: ${{ fromJSON(inputs.toolchains).python.file }}
       - uses: actions/setup-java@v4
-        if: contains(fromJSON(inputs.languages), 'java') && fromJSON(inputs.toolchains).java.source != 'runner-default'
+        if: inputs.languages != '' && inputs.toolchains != '' && contains(fromJSON(inputs.languages), 'java') && fromJSON(inputs.toolchains).java.source != 'runner-default'
         with:
           distribution: ${{ fromJSON(inputs.toolchains).java.distribution }}
           java-version: ${{ fromJSON(inputs.toolchains).java.version }}
           java-version-file: ${{ fromJSON(inputs.toolchains).java.file }}
-      - uses: ./.github/actions/cli
+      - id: install
+        uses: ./.github/actions/cli
         with:
           command: install
       - id: static
+        if: steps.install.outcome == 'success' && steps.install.outputs.status == 'ok'
         uses: ./.github/actions/cli
         with:
           command: validate
           args: "--attempt ${{ inputs.attempt }} --phase static --input .unit-agent/${{ inputs.input-file }}"
       - uses: actions/upload-artifact@v4
+        if: steps.static.outcome == 'success' && steps.static.outputs.status == 'ok'
         with:
           name: ${{ inputs.snapshot-artifact }}
           path: .unit-agent/snapshot${{ inputs.attempt }}
@@ -97,6 +100,7 @@ jobs:
           overwrite: true
           if-no-files-found: warn
       - id: run
+        if: steps.static.outcome == 'success' && steps.static.outputs.status == 'ok'
         uses: ./.github/actions/cli
         with:
           command: validate

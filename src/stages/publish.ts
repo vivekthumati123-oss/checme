@@ -22,8 +22,9 @@ import {
   type ValidatedFileReport,
   type ValidationReport,
 } from "../contracts";
+import { checkCommitPath } from "../core/commit-paths";
 import { sha256Hex } from "../core/context";
-import { toRepoPath } from "../core/paths";
+import { isSafeRealPathInsideRoot, toRepoPath } from "../core/paths";
 import { runStaticPolicyCheck } from "../core/policy";
 import { deriveFinalContent } from "../core/prune";
 import {
@@ -187,26 +188,47 @@ function readSnapshotContent(params: {
   attempt: 1 | 2;
   testPath: string;
   snapshot: Snapshot | null;
+  finalSha256?: string;
 }): { ok: boolean; content: string; reason?: string } {
   const snapDir = params.attempt === 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir;
-  const snapFile = path.join(params.workDir, snapDir, "validated", params.testPath);
-  const finalFallbackFile = path.join(params.workDir, ARTIFACTS.final.dir, "validated", params.testPath);
-  const targetPath = existsSync(snapFile) ? snapFile : finalFallbackFile;
-  if (!existsSync(targetPath)) {
-    return { ok: false, content: "", reason: "snapshot_missing" };
-  }
-  const content = readFileSync(targetPath, "utf8");
-  if (params.snapshot) {
+  const snapValidatedRoot = path.join(params.workDir, snapDir, "validated");
+  const snapFile = path.join(snapValidatedRoot, params.testPath);
+  const finalValidatedRoot = path.join(params.workDir, ARTIFACTS.final.dir, "validated");
+  const finalFallbackFile = path.join(finalValidatedRoot, params.testPath);
+
+  if (existsSync(snapFile)) {
+    if (!isSafeRealPathInsideRoot(params.testPath, snapValidatedRoot, { requireRegularFileIfExists: true })) {
+      return { ok: false, content: "", reason: "path_violation" };
+    }
+    const content = readFileSync(snapFile, "utf8");
     const norm = toRepoPathSafe(params.testPath);
-    const entry = params.snapshot.files.find((e) => toRepoPathSafe(e.testPath) === norm);
-    if (entry && existsSync(snapFile)) {
-      const actual = sha256Hex(content);
+    const entry = params.snapshot?.files.find((e) => toRepoPathSafe(e.testPath) === norm);
+    const actual = sha256Hex(content);
+    if (entry) {
       if (actual !== entry.sha256) {
         return { ok: false, content: "", reason: "policy_violation" };
       }
+      return { ok: true, content };
     }
+    if (params.finalSha256 && actual === params.finalSha256) {
+      return { ok: true, content };
+    }
+    return { ok: false, content: "", reason: "snapshot_missing" };
   }
-  return { ok: true, content };
+
+  if (
+    params.finalSha256 &&
+    existsSync(finalFallbackFile) &&
+    isSafeRealPathInsideRoot(params.testPath, finalValidatedRoot, { requireRegularFileIfExists: true })
+  ) {
+    const content = readFileSync(finalFallbackFile, "utf8");
+    if (sha256Hex(content) !== params.finalSha256) {
+      return { ok: false, content: "", reason: "policy_violation" };
+    }
+    return { ok: true, content };
+  }
+
+  return { ok: false, content: "", reason: "snapshot_missing" };
 }
 
 function toRepoPathSafe(p: string): string {
@@ -240,6 +262,7 @@ async function assembleFinalFromSnapshots(params: {
   const finalDir = path.join(params.workDir, ARTIFACTS.final.dir);
   const finalFiles: Final["files"] = [];
   const rejected: Final["rejected"] = [];
+  const seenNormalizedPaths = new Set<string>();
   const manifestById = new Map((params.manifest?.files ?? []).map((m) => [m.fileId, m]));
 
   for (const { attempt, fr } of mergedReportsByPath.values()) {
@@ -248,48 +271,64 @@ async function assembleFinalFromSnapshots(params: {
       continue;
     }
 
+    let normTestPath: string;
     try {
-      toRepoPath(fr.testPath, params.repoRoot);
+      normTestPath = toRepoPath(fr.testPath, params.repoRoot);
     } catch {
       rejected.push({ testPath: fr.testPath, reason: "path_violation" });
       continue;
     }
 
+    if (!checkCommitPath(normTestPath).ok || seenNormalizedPaths.has(normTestPath.toLowerCase())) {
+      rejected.push({ testPath: normTestPath, reason: "path_violation" });
+      continue;
+    }
+    seenNormalizedPaths.add(normTestPath.toLowerCase());
+
     const snapRes = readSnapshotContent({
       workDir: params.workDir,
       attempt,
-      testPath: fr.testPath,
+      testPath: normTestPath,
       snapshot: attempt === 1 ? snap1 : snap2,
+      finalSha256: fr.finalSha256,
     });
     if (!snapRes.ok) {
-      rejected.push({ testPath: fr.testPath, reason: snapRes.reason ?? "policy_violation" });
+      rejected.push({ testPath: normTestPath, reason: snapRes.reason ?? "policy_violation" });
       continue;
     }
 
     let finalContent = snapRes.content;
     const mf = manifestById.get(fr.fileId);
-    const lang = mf?.language ?? inferLanguageForTestPath(fr.testPath);
+    const lang = mf?.language ?? inferLanguageForTestPath(normTestPath);
+    const refSourceContent =
+      mf?.path && isSafeRealPathInsideRoot(mf.path, params.repoRoot, { requireRegularFileIfExists: true })
+        ? readFileSync(path.join(params.repoRoot, mf.path), "utf8")
+        : undefined;
 
     if (fr.outcome === "accepted_pruned" && fr.prunedTests && fr.prunedTests.length > 0) {
       const derived = await deriveFinalContent({
         language: lang,
-        testPath: fr.testPath,
+        testPath: normTestPath,
         content: snapRes.content,
         failingTestNames: fr.prunedTests,
         repoRoot: params.repoRoot,
         configEol: params.config.files.eol,
         provenanceHeader: params.config.policy.provenanceHeader,
+        referenceSourceContent: refSourceContent,
       });
       if (fr.finalSha256 && sha256Hex(derived.content) !== fr.finalSha256) {
-        rejected.push({ testPath: fr.testPath, reason: "policy_violation" });
+        rejected.push({ testPath: normTestPath, reason: "policy_violation" });
         continue;
       }
       finalContent = derived.content;
+    } else if (fr.finalSha256 && sha256Hex(finalContent) !== fr.finalSha256) {
+      rejected.push({ testPath: normTestPath, reason: "policy_violation" });
+      continue;
     }
 
     const policyRes = await runStaticPolicyCheck({
       language: lang,
-      testPath: fr.testPath,
+      testPath: normTestPath,
       content: finalContent,
       importHint: mf?.importHint,
       sourcePath: mf?.path,
@@ -298,17 +337,17 @@ async function assembleFinalFromSnapshots(params: {
       extraBannedImports: params.config.policy.extraBannedImports,
     });
     if (!policyRes.ok) {
-      rejected.push({ testPath: fr.testPath, reason: "policy_violation" });
+      rejected.push({ testPath: normTestPath, reason: "policy_violation" });
       continue;
     }
 
-    const destPath = path.join(finalDir, "validated", fr.testPath);
+    const destPath = path.join(finalDir, "validated", normTestPath);
     mkdirSync(path.dirname(destPath), { recursive: true });
     writeFileSync(destPath, finalContent, "utf8");
 
     const passingCount = fr.tests.filter((t) => t.status === "pass").length || policyRes.testCount;
     finalFiles.push({
-      path: fr.testPath,
+      path: normTestPath,
       sha256: sha256Hex(finalContent),
       symbolIds: (mf?.symbols ?? []).map((s) => s.symbolId),
       testCount: passingCount,
@@ -326,8 +365,19 @@ async function assembleFinalFromSnapshots(params: {
     );
   }
 
+  const p1Before = params.report1?.patchCoverage.beforePct ?? null;
+  const p2Before = params.report2?.patchCoverage.beforePct ?? null;
+  const p1Proj = params.report1?.patchCoverage.projectedPct ?? null;
+  const p2Proj = params.report2?.patchCoverage.projectedPct ?? null;
+  const mergedBeforePct = p1Before ?? p2Before ?? null;
+  const mergedProjectedPct = p1Proj !== null && p2Proj !== null ? Math.max(p1Proj, p2Proj) : (p2Proj ?? p1Proj ?? null);
+
   const mergedReport = ValidationReportSchema.parse({
     ...latestReport,
+    patchCoverage: {
+      beforePct: mergedBeforePct,
+      projectedPct: mergedProjectedPct,
+    },
     files: [...mergedReportsByPath.values()].map((v) => v.fr),
     notes: [...latestReport.notes, ...notes],
   });
@@ -409,33 +459,36 @@ export function renderPublishSummaryMarkdown(params: {
   const baselineStatus = finalArtifact.patchCoverage.beforePct !== null ? "green" : "no_coverage";
 
   let rendered = template
-    .replace("{{marker}}", marker)
-    .replace("{{mode}}", finalArtifact.mode)
-    .replace("{{statusLabel}}", sanitizeForMarkdown(statusLabel, 200))
-    .replace("{{baselineStatus}}", baselineStatus)
-    .replace("{{baselinePatchPct}}", beforePct)
-    .replace("{{afterPatchPct}}", afterPct)
-    .replace("{{coverageDelta}}", deltaStr);
+    .replace("{{marker}}", () => marker)
+    .replace("{{mode}}", () => finalArtifact.mode)
+    .replace("{{statusLabel}}", () => sanitizeForMarkdown(statusLabel, 200))
+    .replace("{{baselineStatus}}", () => baselineStatus)
+    .replace("{{baselinePatchPct}}", () => beforePct)
+    .replace("{{afterPatchPct}}", () => afterPct)
+    .replace("{{coverageDelta}}", () => deltaStr);
 
   if (rows.length > 0) {
-    rendered = rendered.replace("{{#if rows}}", "").replace("{{/if}}", "").replace("{{rows}}", rows.join("\n"));
+    rendered = rendered
+      .replace("{{#if rows}}", () => "")
+      .replace("{{/if}}", () => "")
+      .replace("{{rows}}", () => rows.join("\n"));
   } else {
-    rendered = rendered.replace(/\{\{#if rows\}\}[\s\S]*?\{\{\/if\}\}/, "_No test files accepted._");
+    rendered = rendered.replace(/\{\{#if rows\}\}[\s\S]*?\{\{\/if\}\}/, () => "_No test files accepted._");
   }
 
-  const bannerText = params.approvalWarning
-    ? params.approvalWarning
+  const sanitizedBanner = params.approvalWarning
+    ? sanitizeForMarkdown(params.approvalWarning, 400)
     : finalArtifact.mode === "propose" && finalArtifact.files.length > 0
       ? `Review the validated test summary above, then approve the \`${sanitizeForMarkdown(envName, 80)}\` environment deployment to commit these tests.`
       : "";
 
-  if (bannerText) {
+  if (sanitizedBanner) {
     rendered = rendered
-      .replace("{{#if approvalBanner}}", "")
-      .replace("{{/if}}", "")
-      .replace("{{approvalBanner}}", sanitizeForMarkdown(bannerText, 400));
+      .replace("{{#if approvalBanner}}", () => "")
+      .replace("{{/if}}", () => "")
+      .replace("{{approvalBanner}}", () => sanitizedBanner);
   } else {
-    rendered = rendered.replace(/\{\{#if approvalBanner\}\}[\s\S]*?\{\{\/if\}\}/, "");
+    rendered = rendered.replace(/\{\{#if approvalBanner\}\}[\s\S]*?\{\{\/if\}\}/, () => "");
   }
 
   const extras: string[] = [];
@@ -669,21 +722,28 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   let effectiveMode = activeConfig.mode;
   let approvalWarning: string | undefined;
 
-  if (effectiveMode === "propose" && finalArtifact.files.length > 0 && opts.github && !opts.dryRun) {
-    const [owner = "", repo = ""] = finalArtifact.repo.split("/");
-    if (owner && repo) {
-      const envRes = await verifyApprovalEnvironment({
-        github: opts.github,
-        owner,
-        repo,
-        environmentName: envName,
-        approvalCheck: checkMode,
-      });
-      if (envRes.downgradedToReport) {
-        effectiveMode = "report";
-        approvalWarning = envRes.warning;
-        if (approvalWarning) {
-          opts.logger?.warn({ envName }, approvalWarning);
+  if (effectiveMode === "propose" && finalArtifact.files.length > 0 && !opts.dryRun) {
+    if (!opts.github) {
+      effectiveMode = "report";
+      approvalWarning =
+        "No GitHub API client available to verify the approval environment; downgrading mode from propose to report.";
+      opts.logger?.warn({ envName }, approvalWarning);
+    } else {
+      const [owner = "", repo = ""] = finalArtifact.repo.split("/");
+      if (owner && repo) {
+        const envRes = await verifyApprovalEnvironment({
+          github: opts.github,
+          owner,
+          repo,
+          environmentName: envName,
+          approvalCheck: checkMode,
+        });
+        if (envRes.downgradedToReport) {
+          effectiveMode = "report";
+          approvalWarning = envRes.warning;
+          if (approvalWarning) {
+            opts.logger?.warn({ envName }, approvalWarning);
+          }
         }
       }
     }
@@ -718,11 +778,15 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
   writeFileSync(path.join(finalDir, "resolved-config.json"), `${JSON.stringify(activeConfig, null, 2)}\n`, "utf8");
 
   // Write final/patch.diff & final/metrics.json
+  const finalValidatedRoot = path.join(finalDir, "validated");
   const patchEntries: Array<{ path: string; content: string }> = [];
   for (const f of updatedFinal.files) {
-    const valFile = path.join(finalDir, "validated", f.path);
+    if (!isSafeRealPathInsideRoot(f.path, finalValidatedRoot, { requireRegularFileIfExists: true })) continue;
+    const valFile = path.join(finalValidatedRoot, f.path);
     if (!existsSync(valFile)) continue;
-    patchEntries.push({ path: f.path, content: readFileSync(valFile, "utf8") });
+    const content = readFileSync(valFile, "utf8");
+    if (sha256Hex(content) !== f.sha256) continue;
+    patchEntries.push({ path: f.path, content });
   }
   writeFileSync(path.join(finalDir, "patch.diff"), buildUnifiedNewFilePatch(patchEntries), "utf8");
 

@@ -15,7 +15,6 @@ import {
   type FailureReason,
   type Failures,
   type Final,
-  type GateName,
   type LanguageKey,
   type LoggerLike,
   type Manifest,
@@ -28,11 +27,12 @@ import {
 import { detectFrameworkForLanguage, sha256Hex } from "../../core/context";
 import type { CoverageLineMap } from "../../core/coverage";
 import { cleanupLeftoverPlacedFiles, recordPlacedFile, unrecordPlacedFile } from "../../local/placement";
-import { cleanRepoRelative, normalizeSlashes, toRepoPath } from "../../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../../core/paths";
 import { runStaticPolicyCheck } from "../../core/policy";
 import { deriveFinalContent } from "../../core/prune";
 import { buildLanguageToolVersions } from "../../languages/toolchains";
 import { sanitizeFailureOutput, sanitizeOutput, writeGitHubOutput, writeStageStatus } from "../../telemetry";
+import { deserializeCoverageLineMap, type BaselineArtifact } from "../baseline";
 import { loadManifest } from "../detect";
 import { computeProjectedPatchCoverage, evaluateFileCoverageGain } from "./coverage";
 import { runFlakeCheck } from "./flake";
@@ -115,6 +115,45 @@ function storeFinalValidatedFile(workDir: string, testPath: string, content: str
   writeFileSync(validatedPath, content, "utf8");
 }
 
+function loadBaselineCoverageMap(workDir: string): CoverageLineMap | null {
+  const baselinePath = path.join(workDir, ARTIFACTS.prepare.dir, "baseline.json");
+  if (!existsSync(baselinePath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(baselinePath, "utf8")) as BaselineArtifact;
+    if (parsed && typeof parsed === "object" && parsed.lineHitsByFile) {
+      return deserializeCoverageLineMap(parsed.lineHitsByFile);
+    }
+  } catch {
+    // ignore invalid optional baseline artifact
+  }
+  return null;
+}
+
+function clearStaleCoverageFile(workspaceRoot: string, workingDirectory: string, coverageFile: string): void {
+  const candidates = [
+    path.resolve(workspaceRoot, coverageFile),
+    path.resolve(workspaceRoot, workingDirectory || ".", coverageFile),
+  ];
+  for (const cand of candidates) {
+    if (
+      isSafeRealPathInsideRoot(path.relative(workspaceRoot, cand), workspaceRoot, { requireRegularFileIfExists: true })
+    ) {
+      try {
+        rmSync(cand, { force: true });
+      } catch {
+        // best-effort stale coverage cleanup
+      }
+    }
+  }
+}
+
+function normalizeJavaFailingNames(names: readonly string[]): string[] {
+  return names.flatMap((n) => {
+    const base = n.replace(/\([^)]*\)(?:\[[^\]]*\])?$/, "").trim();
+    return base && base !== n ? [n, base] : [n];
+  });
+}
+
 export async function runValidate(opts: RunValidateOptions): Promise<{
   report: ValidationReport;
   failures: Failures;
@@ -160,8 +199,18 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
     proposed = ProposedSchema.parse(JSON.parse(readFileSync(pPath, "utf8")));
   }
 
-  writeValidationSnapshot({ workDir: opts.workDir, attempt: snapAttempt, proposed });
+  const snapDirKey = snapAttempt === 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir;
+  const snapMetaPath = path.join(opts.workDir, snapDirKey, "snapshot.json");
+  if (phase !== "run" || !existsSync(snapMetaPath)) {
+    writeValidationSnapshot({
+      workDir: opts.workDir,
+      attempt: snapAttempt,
+      proposed,
+      mergeExisting: attempt >= 3,
+    });
+  }
 
+  const baselineMap = loadBaselineCoverageMap(opts.workDir);
   const toolVersions = loadOrBuildToolVersions(opts.repoRoot, opts.workDir, config);
   const manifestById = new Map(manifest.files.map((f) => [f.fileId, f]));
   const knownSourceFiles = manifest.files.map((f) => f.path);
@@ -250,6 +299,32 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         continue;
       }
 
+      const safeInRepo = isSafeRealPathInsideRoot(safeTestRel, opts.repoRoot, {
+        allowMissingLeaf: true,
+        requireRegularFileIfExists: true,
+      });
+      const safeInWorkspace =
+        phase === "static" ||
+        isSafeRealPathInsideRoot(safeTestRel, workspace.root, {
+          allowMissingLeaf: true,
+          requireRegularFileIfExists: true,
+        });
+      if (!safeInRepo || !safeInWorkspace) {
+        const detail = `Unsafe or symlinked target test path "${safeTestRel}".`;
+        gates.push({ gate: "path", status: "fail", detail });
+        fileReports.push({
+          fileId: pf.fileId,
+          testPath: safeTestRel,
+          outcome: "rejected",
+          reason: "path_violation",
+          gates,
+          tests: [],
+          sha256: null,
+        });
+        rejected.push({ testPath: safeTestRel, reason: "path_violation" });
+        continue;
+      }
+
       const javaPackageName =
         /^package\s+([A-Za-z0-9_.]+)\s*;/.exec(mf.importHint)?.[1] ??
         /(?:^|\/)src\/(?:main|test)\/java\/(.+)\/[^/]+\.java$/.exec(mf.path)?.[1]?.replace(/\//g, ".");
@@ -261,7 +336,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         patterns: langCfg.testPathPatterns,
         generatedSuffix: langCfg.generatedSuffix,
         packageName: javaPackageName,
-        className: mf.testClassName?.replace(/(AgentTest|Test)$/, ""),
+        className: mf.testClassName?.replace(/(AgentTest|Tests?|IT)$/, ""),
       });
 
       const existingTargetAbs = path.join(opts.repoRoot, safeTestRel);
@@ -332,80 +407,40 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
       const sourceAbs = path.join(opts.repoRoot, mf.path);
       const refSourceContent = existsSync(sourceAbs) ? readFileSync(sourceAbs, "utf8") : undefined;
 
-      // Write formatted file into validation workspace if running tests, else just format in memory
-      const workspaceTestAbs = path.join(workspace.root, safeTestRel);
-      const existedBeforeRun = phase !== "static" && existsSync(workspaceTestAbs);
-      const priorWorkspaceContent = existedBeforeRun ? readFileSync(workspaceTestAbs, "utf8") : null;
-
-      if (phase !== "static" && !workspace.isCopy && existedBeforeRun) {
-        const msg = `Target test path "${safeTestRel}" already exists; refusing inplace placement.`;
-        gates.push({ gate: "path", status: "fail", detail: msg });
-        fileReports.push({
-          fileId: pf.fileId,
-          testPath: safeTestRel,
-          outcome: "rejected",
-          reason: "path_violation",
-          gates,
-          tests: [],
-          sha256: null,
-        });
-        rejected.push({ testPath: safeTestRel, reason: msg });
-        continue;
-      }
-
-      if (phase !== "static") {
-        if (!workspace.isCopy) {
-          recordPlacedFile(opts.workDir, safeTestRel, Boolean(opts.local));
-        }
-        mkdirSync(path.dirname(workspaceTestAbs), { recursive: true });
-        writeFileSync(workspaceTestAbs, pf.content, "utf8");
-      }
-
-      const fmtRes = await runFormatAndLintGate({
-        workspaceRoot: workspace.root,
-        repoRoot: opts.repoRoot,
-        language: mf.language,
-        langConfig: langCfg,
-        config,
-        testPath: safeTestRel,
-        content: pf.content,
-        referenceSourceContent: refSourceContent,
-        runCommands: phase !== "static",
-      });
-
-      if (!fmtRes.ok) {
-        const failGate: GateName = "format";
-        gates.push({ gate: failGate, status: "fail", detail: fmtRes.detail });
-        fileReports.push({
-          fileId: pf.fileId,
-          testPath: safeTestRel,
-          outcome: fmtRes.reason === "environment_error" ? "environment_error" : "rejected",
-          reason: fmtRes.reason ?? "lint_error",
-          gates,
-          tests: [],
-          sha256: null,
-        });
-        rejected.push({ testPath: safeTestRel, reason: fmtRes.reason ?? "lint_error" });
-        if (existedBeforeRun && priorWorkspaceContent !== null) {
-          writeFileSync(workspaceTestAbs, priorWorkspaceContent, "utf8");
-        } else if (phase !== "static") {
-          rmSync(workspaceTestAbs, { force: true });
-        }
-        if (!workspace.isCopy && phase !== "static") {
-          unrecordPlacedFile(opts.workDir, safeTestRel, Boolean(opts.local));
-        }
-        continue;
-      }
-      gates.push({ gate: "format", status: "pass" });
-      storeSnapshotValidatedContent({
-        workDir: opts.workDir,
-        attempt: snapAttempt,
-        testPath: safeTestRel,
-        content: fmtRes.formattedContent,
-      });
-
-      // Static-only phase stops here after format normalization
+      // Static-only phase performs EOL/header formatting in memory without executing repo commands
       if (phase === "static") {
+        const fmtRes = await runFormatAndLintGate({
+          workspaceRoot: workspace.root,
+          repoRoot: opts.repoRoot,
+          language: mf.language,
+          langConfig: langCfg,
+          config,
+          testPath: safeTestRel,
+          content: pf.content,
+          referenceSourceContent: refSourceContent,
+          runCommands: false,
+        });
+        if (!fmtRes.ok) {
+          gates.push({ gate: "format", status: "fail", detail: fmtRes.detail });
+          fileReports.push({
+            fileId: pf.fileId,
+            testPath: safeTestRel,
+            outcome: fmtRes.reason === "environment_error" ? "environment_error" : "rejected",
+            reason: fmtRes.reason ?? "lint_error",
+            gates,
+            tests: [],
+            sha256: null,
+          });
+          rejected.push({ testPath: safeTestRel, reason: fmtRes.reason ?? "lint_error" });
+          continue;
+        }
+        gates.push({ gate: "format", status: "pass" });
+        storeSnapshotValidatedContent({
+          workDir: opts.workDir,
+          attempt: snapAttempt,
+          testPath: safeTestRel,
+          content: fmtRes.formattedContent,
+        });
         gates.push({ gate: "preflight", status: "skipped" });
         gates.push({ gate: "snapshot", status: "skipped" });
         gates.push({ gate: "run", status: "skipped" });
@@ -433,7 +468,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         continue;
       }
 
-      // Gate 0: Preflight per language
+      // Gate 0: Preflight per language BEFORE placing files into workspace
       let pre = preflightChecked.get(mf.language);
       if (!pre) {
         pre = await runRunnerPreflight({
@@ -447,6 +482,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
       }
 
       if (!pre.ok) {
+        gates.push({ gate: "format", status: "skipped" });
         gates.push({ gate: "preflight", status: "fail", detail: pre.detail });
         envErrorBlock = {
           command: langCfg.testCommand,
@@ -465,7 +501,26 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         rejected.push({ testPath: safeTestRel, reason: pre.reason ?? "environment_error" });
         continue;
       }
-      gates.push({ gate: "preflight", status: "pass" });
+
+      const workspaceTestAbs = path.join(workspace.root, safeTestRel);
+      const existedBeforeRun = existsSync(workspaceTestAbs);
+      const priorWorkspaceContent = existedBeforeRun ? readFileSync(workspaceTestAbs, "utf8") : null;
+
+      if (!workspace.isCopy && existedBeforeRun) {
+        const msg = `Target test path "${safeTestRel}" already exists; refusing inplace placement.`;
+        gates.push({ gate: "path", status: "fail", detail: msg });
+        fileReports.push({
+          fileId: pf.fileId,
+          testPath: safeTestRel,
+          outcome: "rejected",
+          reason: "path_violation",
+          gates,
+          tests: [],
+          sha256: null,
+        });
+        rejected.push({ testPath: safeTestRel, reason: msg });
+        continue;
+      }
 
       const fw = detectFrameworkForLanguage({
         language: mf.language,
@@ -488,8 +543,101 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
       };
 
       try {
+        if (!workspace.isCopy) {
+          recordPlacedFile(opts.workDir, safeTestRel, Boolean(opts.local));
+        }
+        mkdirSync(path.dirname(workspaceTestAbs), { recursive: true });
+        writeFileSync(workspaceTestAbs, pf.content, "utf8");
+
+        const fmtRes = await runFormatAndLintGate({
+          workspaceRoot: workspace.root,
+          repoRoot: opts.repoRoot,
+          language: mf.language,
+          langConfig: langCfg,
+          config,
+          testPath: safeTestRel,
+          content: pf.content,
+          referenceSourceContent: refSourceContent,
+          runCommands: true,
+        });
+
+        if (!fmtRes.ok) {
+          gates.push({ gate: "format", status: "fail", detail: fmtRes.detail });
+          if (fmtRes.reason === "environment_error") {
+            envErrorBlock = {
+              command: langCfg.lintCommand ?? langCfg.formatCommand ?? langCfg.testCommand,
+              outputTail: sanitizeFailureOutput(fmtRes.detail ?? "", { repoRoot: workspace.root }),
+              reason: "environment_error",
+            };
+          }
+          fileReports.push({
+            fileId: pf.fileId,
+            testPath: safeTestRel,
+            outcome: fmtRes.reason === "environment_error" ? "environment_error" : "rejected",
+            reason: fmtRes.reason ?? "lint_error",
+            gates,
+            tests: [],
+            sha256: null,
+          });
+          rejected.push({ testPath: safeTestRel, reason: fmtRes.reason ?? "lint_error" });
+          continue;
+        }
+        gates.push({ gate: "format", status: "pass" });
+        gates.push({ gate: "preflight", status: "pass" });
+
+        if (langCfg.formatCommand) {
+          const postFmtPolicy = await runStaticPolicyCheck({
+            language: mf.language,
+            testPath: safeTestRel,
+            content: fmtRes.formattedContent,
+            importHint: mf.importHint,
+            sourcePath: mf.path,
+            targetCount: mf.symbols.length,
+            maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
+            extraBannedImports: config.policy.extraBannedImports,
+            wasmDir: opts.wasmDir,
+          });
+          if (!postFmtPolicy.ok) {
+            const detail = postFmtPolicy.violations.map((v) => `${v.rule}: ${v.message}`).join("; ");
+            gates.push({ gate: "static", status: "fail", detail: `Post-format policy failure: ${detail}` });
+            fileReports.push({
+              fileId: pf.fileId,
+              testPath: safeTestRel,
+              outcome: "rejected",
+              reason: "policy_violation",
+              gates,
+              tests: [],
+              sha256: null,
+            });
+            rejected.push({ testPath: safeTestRel, reason: detail });
+            continue;
+          }
+        }
+
+        const existingSnapFile = path.join(opts.workDir, snapDirKey, "validated", safeTestRel);
+        if (phase !== "run" || !existsSync(existingSnapFile)) {
+          storeSnapshotValidatedContent({
+            workDir: opts.workDir,
+            attempt: snapAttempt,
+            testPath: safeTestRel,
+            content: fmtRes.formattedContent,
+          });
+        } else if (langCfg.formatCommand && phase === "run") {
+          // Ensure CI run phase with formatCommand updates snapshot file inside same validate job artifact if needed
+          const existingSnapBytes = readFileSync(existingSnapFile, "utf8");
+          if (existingSnapBytes !== fmtRes.formattedContent) {
+            storeSnapshotValidatedContent({
+              workDir: opts.workDir,
+              attempt: snapAttempt,
+              testPath: safeTestRel,
+              content: fmtRes.formattedContent,
+            });
+          }
+        }
+
         const beforeSnaps = listSnapshotFiles(workspace.root);
         let currentContent = fmtRes.formattedContent;
+        clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile);
         let runRes = await runSingleFileTests(fw.framework, runnerReq);
         const afterSnaps = listSnapshotFiles(workspace.root);
 
@@ -556,10 +704,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           if (isFinalAttempt && passingCases.length > 0 && failingCases.length > 0) {
             const failingNamesForPrune =
               mf.language === "java"
-                ? failingCases.flatMap((t) => {
-                    const base = t.name.replace(/\([^)]*\)(?:\[[^\]]*\])?$/, "").trim();
-                    return base && base !== t.name ? [t.name, base] : [t.name];
-                  })
+                ? normalizeJavaFailingNames(failingCases.map((t) => t.name))
                 : failingCases.map((t) => t.name);
             const derived = await deriveFinalContent({
               language: mf.language,
@@ -574,16 +719,30 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
             });
 
             if (!derived.empty && derived.droppedCount > 0) {
-              writeFileSync(workspaceTestAbs, derived.content, "utf8");
-              const rerun = await runSingleFileTests(fw.framework, runnerReq);
-              if (rerun.exitCode === 0) {
-                currentContent = derived.content;
-                prunedTests = derived.prunedNames;
-                runRes = rerun;
-                testResults = [
-                  ...rerun.tests.map((t) => ({ name: t.name, status: t.status as "pass" })),
-                  ...derived.prunedNames.map((n) => ({ name: n, status: "pruned" as const })),
-                ];
+              const postPrunePolicy = await runStaticPolicyCheck({
+                language: mf.language,
+                testPath: safeTestRel,
+                content: derived.content,
+                importHint: mf.importHint,
+                sourcePath: mf.path,
+                targetCount: mf.symbols.length,
+                maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
+                extraBannedImports: config.policy.extraBannedImports,
+                wasmDir: opts.wasmDir,
+              });
+              if (postPrunePolicy.ok) {
+                writeFileSync(workspaceTestAbs, derived.content, "utf8");
+                clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile);
+                const rerun = await runSingleFileTests(fw.framework, runnerReq);
+                if (rerun.exitCode === 0) {
+                  currentContent = derived.content;
+                  prunedTests = derived.prunedNames;
+                  runRes = rerun;
+                  testResults = [
+                    ...rerun.tests.map((t) => ({ name: t.name, status: t.status as "pass" })),
+                    ...derived.prunedNames.map((n) => ({ name: n, status: "pruned" as const })),
+                  ];
+                }
               }
             }
           }
@@ -630,15 +789,39 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           passingTestNames: passingNames.length > 0 ? passingNames : ["suite"],
         });
 
+        if (flakeRes.environmentFailure) {
+          const ef = flakeRes.environmentFailure;
+          gates.push({ gate: "flake", status: "fail", detail: ef.detail });
+          envErrorBlock = {
+            command: ef.command,
+            outputTail: sanitizeFailureOutput(ef.output || ef.detail, { repoRoot: workspace.root }),
+            reason: ef.reason,
+          };
+          fileReports.push({
+            fileId: pf.fileId,
+            testPath: safeTestRel,
+            outcome: "environment_error",
+            reason: ef.reason,
+            logPath: normalizeSlashes(path.posix.join(stageDirName, logRel)),
+            gates,
+            tests: testResults,
+            sha256: null,
+          });
+          rejected.push({ testPath: safeTestRel, reason: ef.reason });
+          continue;
+        }
+
         if (!flakeRes.ok) {
           // Try pruning individual flaky tests if named tests exist
           let survivedFlake = false;
           if (passingNames.length > flakeRes.flakyTestNames.length && flakeRes.flakyTestNames.length > 0) {
+            const flakyNamesForPrune =
+              mf.language === "java" ? normalizeJavaFailingNames(flakeRes.flakyTestNames) : flakeRes.flakyTestNames;
             const derivedFlake = await deriveFinalContent({
               language: mf.language,
               testPath: safeTestRel,
               content: currentContent,
-              failingTestNames: flakeRes.flakyTestNames,
+              failingTestNames: flakyNamesForPrune,
               repoRoot: opts.repoRoot,
               configEol: config.files.eol,
               provenanceHeader: config.policy.provenanceHeader,
@@ -646,20 +829,58 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
               wasmDir: opts.wasmDir,
             });
             if (!derivedFlake.empty && derivedFlake.droppedCount > 0) {
-              currentContent = derivedFlake.content;
-              writeFileSync(workspaceTestAbs, currentContent, "utf8");
-              const confirm = await runFlakeCheck({
-                framework: fw.framework,
-                req: runnerReq,
-                flakeRuns: config.limits.flakeRuns,
-                passingTestNames: passingNames.filter((n) => !flakeRes.flakyTestNames.includes(n)),
+              const postFlakePolicy = await runStaticPolicyCheck({
+                language: mf.language,
+                testPath: safeTestRel,
+                content: derivedFlake.content,
+                importHint: mf.importHint,
+                sourcePath: mf.path,
+                targetCount: mf.symbols.length,
+                maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
+                extraBannedImports: config.policy.extraBannedImports,
+                wasmDir: opts.wasmDir,
               });
-              if (confirm.ok) {
-                survivedFlake = true;
-                prunedTests.push(...derivedFlake.prunedNames);
-                testResults = testResults.map((t) =>
-                  flakeRes.flakyTestNames.includes(t.name) ? { name: t.name, status: "flaky" as const } : t,
-                );
+              if (postFlakePolicy.ok) {
+                writeFileSync(workspaceTestAbs, derivedFlake.content, "utf8");
+                const confirm = await runFlakeCheck({
+                  framework: fw.framework,
+                  req: runnerReq,
+                  flakeRuns: config.limits.flakeRuns,
+                  passingTestNames: passingNames.filter((n) => !flakeRes.flakyTestNames.includes(n)),
+                });
+                if (confirm.environmentFailure) {
+                  const ef = confirm.environmentFailure;
+                  gates.push({ gate: "flake", status: "fail", detail: ef.detail });
+                  envErrorBlock = {
+                    command: ef.command,
+                    outputTail: sanitizeFailureOutput(ef.output || ef.detail, { repoRoot: workspace.root }),
+                    reason: ef.reason,
+                  };
+                  fileReports.push({
+                    fileId: pf.fileId,
+                    testPath: safeTestRel,
+                    outcome: "environment_error",
+                    reason: ef.reason,
+                    logPath: normalizeSlashes(path.posix.join(stageDirName, logRel)),
+                    gates,
+                    tests: testResults,
+                    sha256: null,
+                  });
+                  rejected.push({ testPath: safeTestRel, reason: ef.reason });
+                  continue;
+                }
+                if (confirm.ok) {
+                  clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile);
+                  const covRerun = await runSingleFileTests(fw.framework, { ...runnerReq, withCoverage: true });
+                  if (covRerun.exitCode === 0) {
+                    currentContent = derivedFlake.content;
+                    survivedFlake = true;
+                    prunedTests.push(...derivedFlake.prunedNames);
+                    testResults = testResults.map((t) =>
+                      flakeRes.flakyTestNames.includes(t.name) ? { name: t.name, status: "flaky" as const } : t,
+                    );
+                  }
+                }
               }
             }
           }
@@ -693,11 +914,8 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           langConfig: langCfg,
           manifestFile: mf,
           knownSourceFiles,
+          baselineMap,
         });
-
-        if (covEval.afterMap) {
-          coverageMaps.push(covEval.afterMap);
-        }
 
         if (covEval.coverageProduced && covEval.gainedLines === 0 && config.policy.dropZeroGainFiles) {
           gates.push({ gate: "coverage", status: "fail", detail: "Zero additional lines covered by generated tests." });
@@ -714,6 +932,9 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           });
           rejected.push({ testPath: safeTestRel, reason: "no_coverage_gain" });
           continue;
+        }
+        if (covEval.afterMap) {
+          coverageMaps.push(covEval.afterMap);
         }
         gates.push({ gate: "coverage", status: covEval.coverageProduced ? "pass" : "skipped" });
 
@@ -763,7 +984,11 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
 
   const projectedPct =
     coverageMaps.length > 0
-      ? computeProjectedPatchCoverage({ manifestFiles: manifest.files, config, coverageMaps })
+      ? computeProjectedPatchCoverage({
+          manifestFiles: manifest.files,
+          config,
+          coverageMaps: baselineMap ? [baselineMap, ...coverageMaps] : coverageMaps,
+        })
       : manifest.baseline.patchCoveragePct;
 
   const report = ValidationReportSchema.parse({

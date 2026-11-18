@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { loadConfig } from "../config";
+import { hasProvenanceHeader, loadConfig } from "../config";
 import {
   ARTIFACTS,
   EXIT_CODES,
@@ -15,7 +15,7 @@ import {
   type ValidationReport,
 } from "../contracts";
 import { sha256Hex } from "../core/context";
-import { cleanRepoRelative, normalizeSlashes, toRepoPath } from "../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../core/paths";
 import { runStaticPolicyCheck } from "../core/policy";
 import { deriveFinalContent } from "../core/prune";
 import { runCommand } from "../exec/exec";
@@ -73,15 +73,27 @@ function findLatestReport(workDir: string): { attempt: number; report: Validatio
   };
 }
 
-function resolveValidatedArtifactContent(workDir: string, attempt: number, testPath: string): string | null {
-  const candidates = [
-    path.join(workDir, ARTIFACTS.final.dir, "validated", testPath),
-    path.join(workDir, attempt <= 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir, "validated", testPath),
+function resolveValidatedArtifactContent(workDir: string, attempt: number, safeRel: string): string | null {
+  const roots = [
+    path.join(workDir, ARTIFACTS.final.dir, "validated"),
+    path.join(workDir, attempt <= 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir, "validated"),
   ];
-  for (const p of candidates) {
-    if (existsSync(p)) return readFileSync(p, "utf8");
+  for (const rootDir of roots) {
+    const p = path.join(rootDir, safeRel);
+    if (existsSync(p) && isSafeRealPathInsideRoot(safeRel, rootDir, { requireRegularFileIfExists: true })) {
+      return readFileSync(p, "utf8");
+    }
   }
   return null;
+}
+
+function targetExistsOrSymlink(absPath: string): boolean {
+  try {
+    lstatSync(absPath);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code !== "ENOENT";
+  }
 }
 
 export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLocalApplyResult> {
@@ -98,7 +110,8 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
   const manifest = ManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
   const { attempt, report } = findLatestReport(opts.workDir);
 
-  const filterSet = opts.files && opts.files.length > 0 ? new Set(opts.files) : null;
+  const filterSet =
+    opts.files && opts.files.length > 0 ? new Set(opts.files.map((f) => cleanRepoRelative(normalizeSlashes(f)))) : null;
   const selected = report.files.filter(
     (fr) => !filterSet || filterSet.has(fr.fileId) || filterSet.has(cleanRepoRelative(normalizeSlashes(fr.testPath))),
   );
@@ -143,56 +156,7 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
       continue;
     }
 
-    // 1. Verify validated content & SHA-256 (or deriveFinalContent for accepted_pruned)
-    const rawValidated = resolveValidatedArtifactContent(opts.workDir, attempt, cleanTestPath);
-    if (rawValidated === null) {
-      refused.push({ path: cleanTestPath, reason: "hash_mismatch" });
-      exitCode = EXIT_CODES.POLICY_OR_HASH;
-      continue;
-    }
-
-    let finalContent = rawValidated;
-    const expectedHash = fr.finalSha256 ?? fr.sha256;
-    const mf = manifestById.get(fr.fileId);
-    const lang = mf?.language ?? inferLanguageForTestPath(cleanTestPath);
-
-    if (fr.outcome === "accepted_pruned" && fr.prunedTests && fr.prunedTests.length > 0) {
-      const snapFile = path.join(
-        opts.workDir,
-        attempt <= 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir,
-        "validated",
-        cleanTestPath,
-      );
-      if (existsSync(snapFile)) {
-        const snapBytes = readFileSync(snapFile, "utf8");
-        const derived = await deriveFinalContent({
-          language: lang,
-          testPath: cleanTestPath,
-          content: snapBytes,
-          failingTestNames: fr.prunedTests,
-          repoRoot: opts.repoRoot,
-          configEol: config.files.eol,
-          provenanceHeader: config.policy.provenanceHeader,
-          wasmDir: opts.wasmDir,
-        });
-        if (fr.finalSha256 && sha256Hex(derived.content) !== fr.finalSha256) {
-          refused.push({ path: cleanTestPath, reason: "hash_mismatch" });
-          exitCode = EXIT_CODES.POLICY_OR_HASH;
-          continue;
-        }
-        finalContent = derived.content;
-      } else if (!expectedHash || sha256Hex(finalContent) !== expectedHash) {
-        refused.push({ path: cleanTestPath, reason: "hash_mismatch" });
-        exitCode = EXIT_CODES.POLICY_OR_HASH;
-        continue;
-      }
-    } else if (!expectedHash || sha256Hex(finalContent) !== expectedHash) {
-      refused.push({ path: cleanTestPath, reason: "hash_mismatch" });
-      exitCode = EXIT_CODES.POLICY_OR_HASH;
-      continue;
-    }
-
-    // 2. Re-run Gates 1 and 2
+    // Validate path safety BEFORE reading any validated artifacts or snapshots
     let safeRel: string;
     try {
       safeRel = toRepoPath(cleanTestPath, opts.repoRoot);
@@ -201,13 +165,92 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
       exitCode = EXIT_CODES.POLICY_OR_HASH;
       continue;
     }
+
+    const mf = manifestById.get(fr.fileId);
+    if (!mf) {
+      refused.push({ path: safeRel, reason: "policy" });
+      exitCode = EXIT_CODES.POLICY_OR_HASH;
+      continue;
+    }
+
+    // 1. Verify source file hash first (fail closed before writing)
+    const srcAbs = path.join(opts.repoRoot, mf.path);
+    const refSourceContent =
+      isSafeRealPathInsideRoot(mf.path, opts.repoRoot, { requireRegularFileIfExists: true }) && existsSync(srcAbs)
+        ? readFileSync(srcAbs, "utf8")
+        : null;
+    if (refSourceContent === null || sha256Hex(refSourceContent) !== mf.sourceSha256) {
+      refused.push({ path: safeRel, reason: "source_changed" });
+      if (exitCode === EXIT_CODES.OK) exitCode = EXIT_CODES.STALE_HEAD_OR_SOURCE;
+      continue;
+    }
+
+    // 2. Verify validated content & SHA-256 (or deriveFinalContent for accepted_pruned)
+    const rawValidated = resolveValidatedArtifactContent(opts.workDir, attempt, safeRel);
+    if (rawValidated === null) {
+      refused.push({ path: safeRel, reason: "hash_mismatch" });
+      exitCode = EXIT_CODES.POLICY_OR_HASH;
+      continue;
+    }
+
+    let finalContent = rawValidated;
+    const expectedHash = fr.finalSha256 ?? fr.sha256;
+    const lang = mf.language ?? inferLanguageForTestPath(safeRel);
+
+    if (fr.outcome === "accepted_pruned" && fr.prunedTests && fr.prunedTests.length > 0) {
+      const snapValidatedRoot = path.join(
+        opts.workDir,
+        attempt <= 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir,
+        "validated",
+      );
+      const snapFile = path.join(snapValidatedRoot, safeRel);
+      if (
+        existsSync(snapFile) &&
+        isSafeRealPathInsideRoot(safeRel, snapValidatedRoot, { requireRegularFileIfExists: true })
+      ) {
+        const snapBytes = readFileSync(snapFile, "utf8");
+        const derived = await deriveFinalContent({
+          language: lang,
+          testPath: safeRel,
+          content: snapBytes,
+          failingTestNames: fr.prunedTests,
+          repoRoot: opts.repoRoot,
+          configEol: config.files.eol,
+          provenanceHeader: config.policy.provenanceHeader,
+          referenceSourceContent: refSourceContent,
+          wasmDir: opts.wasmDir,
+        });
+        if (fr.finalSha256 && sha256Hex(derived.content) !== fr.finalSha256) {
+          refused.push({ path: safeRel, reason: "hash_mismatch" });
+          exitCode = EXIT_CODES.POLICY_OR_HASH;
+          continue;
+        }
+        finalContent = derived.content;
+      } else if (!expectedHash || sha256Hex(finalContent) !== expectedHash) {
+        refused.push({ path: safeRel, reason: "hash_mismatch" });
+        exitCode = EXIT_CODES.POLICY_OR_HASH;
+        continue;
+      }
+    } else if (!expectedHash || sha256Hex(finalContent) !== expectedHash) {
+      refused.push({ path: safeRel, reason: "hash_mismatch" });
+      exitCode = EXIT_CODES.POLICY_OR_HASH;
+      continue;
+    }
+
+    // 3. Re-run Gates 1 and 2 and provenance header check
+    if (config.policy.provenanceHeader && !hasProvenanceHeader(finalContent)) {
+      refused.push({ path: safeRel, reason: "policy" });
+      exitCode = EXIT_CODES.POLICY_OR_HASH;
+      continue;
+    }
+
     const policyRes = await runStaticPolicyCheck({
       language: lang,
       testPath: safeRel,
       content: finalContent,
-      importHint: mf?.importHint,
-      sourcePath: mf?.path,
-      targetCount: Math.max(1, mf?.symbols.length ?? 1),
+      importHint: mf.importHint,
+      sourcePath: mf.path,
+      targetCount: Math.max(1, mf.symbols.length),
       maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
       extraBannedImports: config.policy.extraBannedImports,
       wasmDir: opts.wasmDir,
@@ -218,19 +261,14 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
       continue;
     }
 
-    // 3. Recompute source file SHA-256 vs manifest.sourceSha256 -> exit 50
-    if (mf) {
-      const srcAbs = path.join(opts.repoRoot, mf.path);
-      if (!existsSync(srcAbs) || sha256Hex(readFileSync(srcAbs, "utf8")) !== mf.sourceSha256) {
-        refused.push({ path: safeRel, reason: "source_changed" });
-        if (exitCode === EXIT_CODES.OK) exitCode = EXIT_CODES.STALE_HEAD_OR_SOURCE;
-        continue;
-      }
+    // 4. Refuse symlinks/escapes and existing files (including broken symlinks)
+    if (!isSafeRealPathInsideRoot(safeRel, opts.repoRoot, { allowMissingLeaf: true })) {
+      refused.push({ path: safeRel, reason: "policy" });
+      exitCode = EXIT_CODES.POLICY_OR_HASH;
+      continue;
     }
-
-    // 4. Refuse if target path now exists
     const targetAbs = path.join(opts.repoRoot, safeRel);
-    if (existsSync(targetAbs)) {
+    if (targetExistsOrSymlink(targetAbs)) {
       refused.push({ path: safeRel, reason: "target_exists" });
       continue;
     }
@@ -241,11 +279,12 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
     written.push({ path: safeRel, sha256: sha256Hex(finalContent) });
   }
 
-  // Clean staging directory when files applied cleanly (no source_changed / hash_mismatch failures)
+  // Remove only applied staging files so unrelated drafts under stagingDir stay intact
   const stagingAbs = path.resolve(opts.repoRoot, config.local.stagingDir);
   if (written.length > 0 && existsSync(stagingAbs)) {
-    for (const ent of readdirSync(stagingAbs)) {
-      rmSync(path.join(stagingAbs, ent), { recursive: true, force: true });
+    for (const w of written) {
+      if (!isSafeRealPathInsideRoot(w.path, stagingAbs, { allowMissingLeaf: true })) continue;
+      rmSync(path.join(stagingAbs, w.path), { force: true });
     }
   }
 

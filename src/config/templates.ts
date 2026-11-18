@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { LanguageKey } from "../contracts";
@@ -93,13 +93,31 @@ export function resolveTestPathForSource(params: {
   fileExists?: (repoRelPath: string) => boolean;
   readFilePrefix?: (repoRelPath: string) => string | null;
 }): ResolveTestPathResult {
-  const exists = params.fileExists ?? ((rel: string) => existsSync(path.join(params.repoRoot, rel)));
+  const exists =
+    params.fileExists ??
+    ((rel: string) => {
+      const full = path.join(params.repoRoot, rel);
+      try {
+        const st = lstatSync(full);
+        return !st.isSymbolicLink() && st.isFile();
+      } catch {
+        return false;
+      }
+    });
   const readPrefix =
     params.readFilePrefix ??
     ((rel: string) => {
       const full = path.join(params.repoRoot, rel);
-      if (!existsSync(full)) return null;
-      return readFileSync(full, "utf8").slice(0, 256);
+      try {
+        const st = lstatSync(full);
+        if (st.isSymbolicLink() || !st.isFile()) return null;
+        const realRoot = realpathSync(params.repoRoot);
+        const realFull = realpathSync(full);
+        if (!realFull.startsWith(realRoot + path.sep) && realFull !== realRoot) return null;
+        return readFileSync(full, "utf8").slice(0, 256);
+      } catch {
+        return null;
+      }
     });
 
   const primaryPattern = params.testPathPatterns[0];

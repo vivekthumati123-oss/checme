@@ -28,7 +28,7 @@ export const JS_TOOLCHAIN_MISMATCH_PATTERNS: readonly RegExp[] = [
   /The engine "node" is incompatible with this module/i,
   /ERR_REQUIRE_ESM/,
   /NODE_MODULE_VERSION\s+\d+/i,
-  /SyntaxError: Unexpected token/i,
+  /node_modules[/\\].*SyntaxError: Unexpected token/i,
 ];
 
 export function extractMajorVersion(raw: string | null | undefined): number | null {

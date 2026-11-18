@@ -56,10 +56,16 @@ function extractParameterTypes(fnNode: Parser.SyntaxNode): string[] {
   for (let i = 0; i < paramsNode.namedChildCount; i++) {
     const param = paramsNode.namedChild(i);
     if (!param) continue;
-    if (param.type === "formal_parameter" || param.type === "spread_parameter") {
+    if (param.type === "formal_parameter") {
       const typeNode = param.childForFieldName("type");
       if (typeNode) {
         types.push(typeNode.text.replace(/\s+/g, ""));
+      }
+    } else if (param.type === "spread_parameter") {
+      const typeNode = param.childForFieldName("type") ?? param.namedChild(0);
+      if (typeNode) {
+        const clean = typeNode.text.replace(/\s+/g, "");
+        types.push(clean.endsWith("...") ? clean : `${clean}...`);
       }
     }
   }
@@ -103,125 +109,147 @@ export async function parseJavaFile(params: {
 }): Promise<FileParseResult> {
   const parser = await createTreeSitterParser("java", params.wasmDir);
   const tree = parser.parse(params.content);
-  const errorStats = computeErrorStats(tree);
+  let errorStats: ReturnType<typeof computeErrorStats>;
   const contentLines = params.content.split(/\r?\n/);
   const isTestFile = isTestFilePath(params.filePath);
   const isGeneratedFile = isGeneratedSourceContent(params.filePath, params.content);
-  const packageName = extractPackageName(tree.rootNode);
+  let packageName: string | undefined;
   const allSymbols: ParsedSymbol[] = [];
   let primaryClassName: string | undefined;
+  let imports: string[];
 
-  const visitClassContainer = (
-    classNode: Parser.SyntaxNode,
-    parentClassPath: string | undefined,
-    parentExported: boolean,
-  ): void => {
-    const nameNode = classNode.childForFieldName("name");
-    const className = nameNode?.text;
-    if (!className) return;
+  try {
+    errorStats = computeErrorStats(tree);
+    packageName = extractPackageName(tree.rootNode);
 
-    const classMods = readModifiers(classNode);
-    const classExported = parentExported && !classMods.isPrivate && !classMods.isProtected && !classMods.isGenerated;
-    const fullClassName = parentClassPath ? `${parentClassPath}.${className}` : className;
+    const visitClassContainer = (
+      classNode: Parser.SyntaxNode,
+      parentClassPath: string | undefined,
+      parentExported: boolean,
+    ): void => {
+      const nameNode = classNode.childForFieldName("name");
+      const className = nameNode?.text;
+      if (!className) return;
 
-    if (classExported && !parentClassPath && (!primaryClassName || classMods.isPublic)) {
-      primaryClassName = className;
-    }
+      const isInterface = classNode.type === "interface_declaration";
+      const classMods = readModifiers(classNode);
+      const classExported = parentExported && !classMods.isPrivate && !classMods.isProtected && !classMods.isGenerated;
+      const fullClassName = parentClassPath ? `${parentClassPath}.${className}` : className;
 
-    const body = classNode.childForFieldName("body");
-    if (!body) return;
+      if (!isInterface && classExported && !parentClassPath && (!primaryClassName || classMods.isPublic)) {
+        primaryClassName = className;
+      }
 
-    const pkgPrefix = packageName ? `${packageName}.` : "";
+      const body = classNode.childForFieldName("body");
+      if (!body) return;
 
-    const visitMember = (member: Parser.SyntaxNode): void => {
-      if (member.type === "enum_body_declarations") {
-        for (let j = 0; j < member.namedChildCount; j++) {
-          const enumMember = member.namedChild(j);
-          if (enumMember) {
-            visitMember(enumMember);
+      const pkgPrefix = packageName ? `${packageName}.` : "";
+
+      const visitMember = (member: Parser.SyntaxNode): void => {
+        if (member.type === "enum_body_declarations") {
+          for (let j = 0; j < member.namedChildCount; j++) {
+            const enumMember = member.namedChild(j);
+            if (enumMember) {
+              visitMember(enumMember);
+            }
           }
+          return;
         }
-        return;
-      }
 
-      if (
-        member.type === "class_declaration" ||
-        member.type === "record_declaration" ||
-        member.type === "enum_declaration"
-      ) {
-        visitClassContainer(member, fullClassName, classExported);
-        return;
-      }
+        if (
+          member.type === "class_declaration" ||
+          member.type === "record_declaration" ||
+          member.type === "enum_declaration" ||
+          member.type === "interface_declaration"
+        ) {
+          visitClassContainer(member, fullClassName, classExported);
+          return;
+        }
 
-      if (member.type === "method_declaration" || member.type === "constructor_declaration") {
-        const mods = readModifiers(member);
-        const methodName = member.childForFieldName("name")?.text ?? className;
-        const bodyNode = member.childForFieldName("body");
-        const isAbstract = mods.isAbstract || !bodyNode;
-        const paramTypes = extractParameterTypes(member);
-        const startLine = member.startPosition.row + 1;
-        const endLine = member.endPosition.row + 1;
-        const complexity = computeCyclomaticComplexity(member, bodyNode, JAVA_COMPLEXITY_RULES);
-        const execLines = bodyNode ? estimateExecutableLines(contentLines, startLine + 1, endLine) : 0;
-        const signature = extractSignatureFromNode(member, bodyNode);
-        const kind: "method" | "constructor" = member.type === "constructor_declaration" ? "constructor" : "method";
+        if (
+          member.type === "method_declaration" ||
+          member.type === "constructor_declaration" ||
+          member.type === "compact_constructor_declaration"
+        ) {
+          const mods = readModifiers(member);
+          const methodName = member.childForFieldName("name")?.text ?? className;
+          const bodyNode = member.childForFieldName("body");
+          const isAbstract = mods.isAbstract || !bodyNode;
+          const paramTypes = extractParameterTypes(member);
+          const startLine = member.startPosition.row + 1;
+          const endLine = member.endPosition.row + 1;
+          const complexity = computeCyclomaticComplexity(member, bodyNode, JAVA_COMPLEXITY_RULES);
+          const openBraceLine = bodyNode ? (contentLines[bodyNode.startPosition.row] ?? "").trim() : "";
+          const bodyStartLine = bodyNode
+            ? openBraceLine === "{"
+              ? bodyNode.startPosition.row + 1
+              : bodyNode.startPosition.row + 2
+            : startLine + 1;
+          const execLines = bodyNode ? estimateExecutableLines(contentLines, bodyStartLine, endLine) : 0;
+          const signature = extractSignatureFromNode(member, bodyNode);
+          const kind: "method" | "constructor" =
+            member.type === "constructor_declaration" || member.type === "compact_constructor_declaration"
+              ? "constructor"
+              : "method";
 
-        const trivial = isTrivialSymbolBody({
-          kind,
-          name: methodName,
-          signature,
-          bodyText: bodyNode?.text ?? "",
-          complexity,
-          executableLinesFallback: execLines,
-        });
+          const trivial = isTrivialSymbolBody({
+            kind,
+            name: methodName,
+            signature,
+            bodyText: bodyNode?.text ?? "",
+            complexity,
+            executableLinesFallback: execLines,
+          });
 
-        const exported = classExported && !mods.isPrivate && !mods.isProtected && !mods.isGenerated;
+          const exported = classExported && !mods.isPrivate && !mods.isProtected && !mods.isGenerated;
 
-        allSymbols.push({
-          symbolId: `${pkgPrefix}${fullClassName}#${methodName}(${paramTypes.join(",")})`,
-          qualifiedName: `${fullClassName}.${methodName}`,
-          kind,
-          signature,
-          startLine,
-          endLine,
-          complexity,
-          executableLinesFallback: execLines,
-          exported,
-          abstract: isAbstract,
-          trivial,
-          isTest: isTestFile,
-          className: fullClassName,
-          packageName,
-        });
+          allSymbols.push({
+            symbolId: `${pkgPrefix}${fullClassName}#${methodName}(${paramTypes.join(",")})`,
+            qualifiedName: `${fullClassName}.${methodName}`,
+            kind,
+            signature,
+            startLine,
+            endLine,
+            complexity,
+            executableLinesFallback: execLines,
+            exported,
+            abstract: isAbstract,
+            trivial,
+            isTest: isTestFile,
+            className: fullClassName,
+            packageName,
+          });
+        }
+      };
+
+      for (let i = 0; i < body.namedChildCount; i++) {
+        const member = body.namedChild(i);
+        if (member) {
+          visitMember(member);
+        }
       }
     };
 
-    for (let i = 0; i < body.namedChildCount; i++) {
-      const member = body.namedChild(i);
-      if (member) {
-        visitMember(member);
+    for (let i = 0; i < tree.rootNode.namedChildCount; i++) {
+      const child = tree.rootNode.namedChild(i);
+      if (!child) continue;
+      if (
+        child.type === "class_declaration" ||
+        child.type === "record_declaration" ||
+        child.type === "enum_declaration" ||
+        child.type === "interface_declaration"
+      ) {
+        visitClassContainer(child, undefined, true);
       }
     }
-  };
 
-  for (let i = 0; i < tree.rootNode.namedChildCount; i++) {
-    const child = tree.rootNode.namedChild(i);
-    if (!child) continue;
-    if (
-      child.type === "class_declaration" ||
-      child.type === "record_declaration" ||
-      child.type === "enum_declaration"
-    ) {
-      visitClassContainer(child, undefined, true);
-    }
+    imports = extractJavaImports(tree.rootNode);
+  } finally {
+    tree.delete();
+    parser.delete();
   }
-
-  const imports = extractJavaImports(tree.rootNode);
   const eligibleSymbols =
     isTestFile || isGeneratedFile ? [] : filterEligibleSymbols(allSymbols, params.minExecutableLines ?? 2);
-
-  tree.delete();
-  parser.delete();
 
   return {
     language: "java",

@@ -23,7 +23,7 @@ export async function runJestSingleFile(req: RunnerRequest): Promise<RunnerOutco
   const jsonOut = path.join(os.tmpdir(), `ua-jest-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   const runArgs = [...args];
   if (runArgs.some((a) => /jest/i.test(a)) || /jest/i.test(file)) {
-    runArgs.push(relTestPath, "--json", `--outputFile=${jsonOut}`);
+    runArgs.push("--runTestsByPath", relTestPath, "--json", `--outputFile=${jsonOut}`);
     if (req.withCoverage && !runArgs.includes("--coverage")) {
       runArgs.push("--coverage");
     }
