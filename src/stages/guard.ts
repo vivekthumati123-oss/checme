@@ -170,7 +170,7 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
   }
 
   const baseRepoFullName = prObj.base?.repo?.full_name ?? repoFullName;
-  const isFork = !headRepoFullName || headRepoFullName !== baseRepoFullName;
+  const isFork = !headRepoFullName || headRepoFullName.toLowerCase() !== baseRepoFullName.toLowerCase();
   if (isFork) {
     const result: GuardResult = {
       proceed: false,

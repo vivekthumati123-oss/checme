@@ -267,5 +267,17 @@ describe("guard stage", () => {
       writeOutputs: false,
     });
     expect(clearedLabelRes.proceed).toBe(true);
+
+    const caseMismatchRes = await runGuard({
+      repoRoot: dir,
+      workDir: path.join(dir, ".unit-agent"),
+      config: VALID_CFG,
+      eventPayload: baseEvent({
+        head: { sha: "head123", ref: "feat/pay", repo: { full_name: "Acme/App" } },
+      }),
+      writeOutputs: false,
+    });
+    expect(caseMismatchRes.proceed).toBe(true);
+    expect(caseMismatchRes.reason).toBe("ok");
   });
 });

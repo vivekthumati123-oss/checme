@@ -604,4 +604,33 @@ describe("github integration & commit stage", () => {
     expect(rendered).toContain("build-$&-step");
     expect(rendered).toContain("`unit-agent-approval`");
   });
+
+  it("allows same-repo commits when owner/repo casing differs between headRepoFullName and baseRepoFullName", async () => {
+    const dir = makeTempDir();
+    const workDir = path.join(dir, ".unit-agent");
+    makeFinalFixture(workDir);
+
+    const fake = makeFakeGitHub({
+      getPullRequest: async () => ({
+        headSha: "head123",
+        headRef: "feat/add-tests",
+        headRepoFullName: "Acme/App",
+        baseRepoFullName: "acme/app",
+        draft: false,
+        authorLogin: "pr-author",
+        authorType: "User",
+        labels: [],
+        headCommitMessage: "feat: math",
+      }),
+    });
+
+    const res = await runCommit({
+      workDir,
+      expectedHead: "head123",
+      runId: 4242,
+      github: fake.client,
+      writeOutputs: false,
+    });
+    expect(res.committed).toBe(true);
+  });
 });

@@ -338,7 +338,7 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
 
   // 2. Live PR head staleness & same-repo checks
   const prInfo = await opts.github.getPullRequest(owner, repo, finalArtifact.pr);
-  if (!prInfo.headRepoFullName || prInfo.headRepoFullName !== prInfo.baseRepoFullName) {
+  if (!prInfo.headRepoFullName || prInfo.headRepoFullName.toLowerCase() !== prInfo.baseRepoFullName.toLowerCase()) {
     await abortCommitPolicyOrHash({
       github: opts.github,
       dryRun: opts.dryRun,
