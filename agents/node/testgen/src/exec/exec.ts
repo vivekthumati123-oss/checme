@@ -749,7 +749,11 @@ async function runInWindowsJob(
             setTimeout(() => {
               outCol.abort();
               errCol.abort();
-            }, 200);
+              const entry = winBrokerPending.get(id);
+              if (entry) {
+                entry.onBrokerMsg("DONE", 1);
+              }
+            }, 500);
           }, timeoutMs)
         : null;
 

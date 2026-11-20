@@ -189,7 +189,11 @@ afterEach(() => {
   process.exitCode = 0;
   while (createdDirs.length > 0) {
     const dir = createdDirs.pop()!;
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      // ignore EBUSY / cleanup errors
+    }
   }
 });
 
