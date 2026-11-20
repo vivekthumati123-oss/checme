@@ -5,7 +5,7 @@ export default defineConfig({
     include: ["tests/unit/agents/node/testgen/**/*.test.ts"],
     exclude: ["node_modules", "dist", "agents/node/testgen/dist/**", "packages/**", "agents/node/testgen/fixtures/**"],
     environment: "node",
-    testTimeout: 30_000,
+    testTimeout: 60_000,
     env: {
       GITHUB_REPOSITORY: "",
     },

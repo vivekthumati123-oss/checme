@@ -645,18 +645,28 @@ function createWinPipeCollector(
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     const maxBytes = 1_000_000;
-    let connected = false;
+    let activeSock: net.Socket | undefined;
 
     const finish = (srv: net.Server) => {
       if (settled) return;
       settled = true;
+      if (activeSock && !activeSock.destroyed) {
+        try {
+          activeSock.destroy();
+        } catch {
+          // ignore
+        }
+      }
       srv.close(() => {
         closedResolve(Buffer.concat(chunks).toString("utf8"));
       });
+      setTimeout(() => {
+        closedResolve(Buffer.concat(chunks).toString("utf8"));
+      }, 300);
     };
 
     const srv = net.createServer((sock) => {
-      connected = true;
+      activeSock = sock;
       sock.on("data", (buf: Buffer) => {
         if (totalBytes < maxBytes) {
           const remaining = maxBytes - totalBytes;
@@ -675,9 +685,7 @@ function createWinPipeCollector(
       resolveListen({
         closed,
         abort: () => {
-          if (!connected) {
-            finish(srv);
-          }
+          finish(srv);
         },
       });
     });
@@ -738,6 +746,10 @@ async function runInWindowsJob(
             } catch {
               // Broker already exited.
             }
+            setTimeout(() => {
+              outCol.abort();
+              errCol.abort();
+            }, 200);
           }, timeoutMs)
         : null;
 
@@ -781,7 +793,13 @@ async function runInWindowsJob(
     }
   }
 
-  const [exitCode, stdout, stderr] = await Promise.all([doneCode, outCol.closed, errCol.closed]);
+  const exitCode = await doneCode;
+  const pipeTimeout = setTimeout(() => {
+    outCol.abort();
+    errCol.abort();
+  }, 1000);
+  const [stdout, stderr] = await Promise.all([outCol.closed, errCol.closed]);
+  clearTimeout(pipeTimeout);
   const all = Buffer.concat(allChunks).toString("utf8");
   const failed = timedOut || exitCode === undefined || exitCode !== 0;
   const spawnErrorOverride =
