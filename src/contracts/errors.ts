@@ -33,8 +33,8 @@ export class ConfigError extends StageError {
 }
 
 export class AuthError extends StageError {
-  constructor(message: string, reason = "auth_failure") {
-    super(message, EXIT_CODES.SDK_OR_AUTH, "generate", reason);
+  constructor(message: string, reason = "auth_failure", stage: StageName = "generate") {
+    super(message, EXIT_CODES.SDK_OR_AUTH, stage, reason);
     this.name = "AuthError";
   }
 }

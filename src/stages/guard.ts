@@ -187,14 +187,11 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
     return result;
   }
 
-  // Only load repo config after verifying the PR is enabled, non-fork, and not a fork checkout
-  const loadedCfg = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
-
   if (!headCommitMessage && !headSha.startsWith("-") && opts.repoRoot && existsSync(opts.repoRoot)) {
     try {
       const logRes = await runCommand("git", ["log", "-1", "--format=%B", headSha], {
         cwd: opts.repoRoot,
-        config: loadedCfg,
+        config: opts.config,
         timeoutMs: 10_000,
       });
       if (logRes.exitCode === 0 && logRes.stdout.trim()) {
@@ -228,10 +225,13 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
   }
 
   const proceed = reason === "ok";
+  // Only load repo config when proceeding so skipped PRs never fail on missing/broken .unit-agent.yml
+  const loadedCfg = proceed ? (opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config) : opts.config;
+  const mode: "report" | "propose" = loadedCfg?.mode ?? defaultMode;
   const result: GuardResult = {
     proceed,
     reason,
-    mode: loadedCfg.mode,
+    mode,
     pr: prNum,
     baseSha,
     headSha,
@@ -239,7 +239,7 @@ export async function runGuard(opts: RunGuardOptions): Promise<GuardResult> {
     repoFullName,
   };
 
-  opts.logger?.info({ proceed, reason, pr: prNum, mode: loadedCfg.mode }, "Guard evaluated PR eligibility");
+  opts.logger?.info({ proceed, reason, pr: prNum, mode }, "Guard evaluated PR eligibility");
   finalizeGuardOutputs(opts, result);
   return result;
 }

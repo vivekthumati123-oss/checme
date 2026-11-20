@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { checkCommitPath } from "../core/commit-paths";
 import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../core/paths";
 
 export interface PlacedEntry {
@@ -55,7 +56,10 @@ export function cleanupLeftoverPlacedFiles(workDir: string, repoRoot: string): s
     for (const entry of entries) {
       try {
         const safeRel = toRepoPath(entry.path, repoRoot);
-        if (!isSafeRealPathInsideRoot(safeRel, repoRoot, { allowMissingLeaf: true })) {
+        if (
+          !checkCommitPath(safeRel).ok ||
+          !isSafeRealPathInsideRoot(safeRel, repoRoot, { allowMissingLeaf: true, requireRegularFileIfExists: true })
+        ) {
           continue;
         }
         const abs = path.join(repoRoot, safeRel);

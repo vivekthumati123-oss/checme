@@ -1,11 +1,11 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "../config";
 import type { LanguageKey, LocalDoctorSummary, UnitAgentConfig } from "../contracts";
 import { sha256Hex } from "../core/context";
-import { isSafeRealPathInsideRoot } from "../core/paths";
+import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../core/paths";
 import { extractTestRulesBlock, loadPromptTemplate } from "../llm";
 import { runLocalDoctor, UNIT_AGENT_CLI_VERSION } from "./doctor";
 
@@ -93,7 +93,34 @@ function stripJsonc(raw: string): string {
     i += 1;
   }
 
-  return out.replace(/,\s*([}\]])/g, "$1");
+  let cleaned = "";
+  inString = false;
+  escape = false;
+  for (let j = 0; j < out.length; j += 1) {
+    const c = out[j]!;
+    if (inString) {
+      cleaned += c;
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      cleaned += c;
+      continue;
+    }
+    if (c === ",") {
+      let k = j + 1;
+      while (k < out.length && /\s/.test(out[k]!)) k += 1;
+      if (out[k] === "}" || out[k] === "]") {
+        continue;
+      }
+    }
+    cleaned += c;
+  }
+
+  return cleaned;
 }
 
 function stampContentHash(contentWithPlaceholder: string): string {
@@ -199,7 +226,12 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
   // VS Code tasks merge (tolerant JSONC)
   let tasksSampleWritten = false;
   if (opts.withTasks !== false) {
+    const cliEntry =
+      cleanRepoRelative(normalizeSlashes(path.relative(opts.repoRoot, path.join(opts.workDir, "bin", "cli.js")))) ||
+      ".unit-agent/bin/cli.js";
     const jsonTaskVars: Record<string, string> = {
+      rawNodeCommand: JSON.stringify(rawNodeCmd).slice(1, -1),
+      cliEntry: JSON.stringify(cliEntry).slice(1, -1),
       nodeCommand: JSON.stringify(shellNodeCmd).slice(1, -1),
       cli: JSON.stringify(cliCmd).slice(1, -1),
       stagingDir: JSON.stringify(vars.stagingDir).slice(1, -1),
@@ -211,6 +243,10 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
       inputs?: Array<{ id: string; [k: string]: unknown }>;
     };
 
+    const tasksRel = ".vscode/tasks.json";
+    if (!isSafeRealPathInsideRoot(tasksRel, opts.repoRoot, { allowMissingLeaf: true })) {
+      throw new Error(`Refusing unsafe write outside repoRoot: ${tasksRel}`);
+    }
     const tasksPath = path.join(opts.repoRoot, ".vscode", "tasks.json");
     if (!existsSync(tasksPath)) {
       if (!opts.dryRun) {
@@ -244,6 +280,10 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
         }
         fileResults.push({ path: ".vscode/tasks.json", action: changed ? "updated" : "unchanged" });
       } catch {
+        const sampleRel = ".vscode/unit-agent.tasks.sample.json";
+        if (!isSafeRealPathInsideRoot(sampleRel, opts.repoRoot, { allowMissingLeaf: true })) {
+          throw new Error(`Refusing unsafe write outside repoRoot: ${sampleRel}`);
+        }
         const samplePath = path.join(opts.repoRoot, ".vscode", "unit-agent.tasks.sample.json");
         if (!opts.dryRun) {
           mkdirSync(path.dirname(samplePath), { recursive: true });
@@ -258,6 +298,9 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
   // Ensure .gitignore contains .unit-agent/
   const gitignorePath = path.join(opts.repoRoot, ".gitignore");
   if (!opts.dryRun) {
+    if (!isSafeRealPathInsideRoot(".gitignore", opts.repoRoot, { allowMissingLeaf: true })) {
+      throw new Error("Refusing unsafe write outside repoRoot: .gitignore");
+    }
     const existingIgnore = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
     const hasEntry = existingIgnore
       .split(/\r?\n/)
@@ -281,12 +324,20 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
     ];
     const srcCli = cliCandidates.find((c) => existsSync(c));
     if (srcCli) {
-      cpSync(srcCli, path.join(binDir, "cli.js"), { force: true });
       const distRoot = path.dirname(srcCli);
-      for (const extra of ["wasm", "prompts", "templates", "scripts", "unit-agent-jacoco.init.gradle"]) {
-        const extraSrc = path.join(distRoot, extra);
-        if (existsSync(extraSrc)) {
-          cpSync(extraSrc, path.join(binDir, extra), { recursive: true, force: true });
+      let sameDir: boolean;
+      try {
+        sameDir = realpathSync(distRoot) === realpathSync(binDir);
+      } catch {
+        sameDir = false;
+      }
+      if (!sameDir) {
+        cpSync(srcCli, path.join(binDir, "cli.js"), { force: true });
+        for (const extra of ["wasm", "prompts", "templates", "scripts", "unit-agent-jacoco.init.gradle"]) {
+          const extraSrc = path.join(distRoot, extra);
+          if (existsSync(extraSrc)) {
+            cpSync(extraSrc, path.join(binDir, extra), { recursive: true, force: true });
+          }
         }
       }
       bundleCopied = true;

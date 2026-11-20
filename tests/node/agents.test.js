@@ -121,3 +121,45 @@ test("codeconnect: dry run writes nothing anywhere", async () => {
   assert.equal(scm.commits.length + scm.pullRequests.length, 0);
   assert.equal(api.calls.filter((c) => c.method !== "GET").length, 0);
 });
+
+test("testgen: enforces repository.read policy, rejects unsafe paths, sanitizes PR comment, and handles Java/d.ts helpers", async () => {
+  assert.deepEqual(
+    selectSourceFiles([
+      { path: "src/types.d.ts", status: "modified" },
+      { path: "src/a_test.py", status: "modified" },
+      { path: "src/FooTests.java", status: "modified" },
+      { path: "src/Foo.java", status: "modified" },
+    ]).map((f) => f.path),
+    ["src/Foo.java"],
+  );
+  assert.equal(expectedTestPath("src/main/java/com/acme/Foo.java", "junit"), "src/test/java/com/acme/FooTest.java");
+
+  const agent = new TestGenAgent(testgen);
+  const denied = await agent.execute(
+    prRequest(testgen),
+    context({
+      binding: testgen,
+      scm: scmWith(),
+      runtime: MockAgentRuntime.replay(good),
+      policy: { rules: [{ action: "file.write", effect: "allow" }] },
+    }),
+  );
+  assert.equal(denied.status, "failed");
+  assert.match(denied.summary, /Repository read denied/);
+
+  const scm = scmWith();
+  const runtime = MockAgentRuntime.replay({
+    framework: "jest",
+    files: [
+      { path: "C:/evil.test.js", content: "x" },
+      { path: "tests/unit/", content: "x" },
+      { path: "tests/unit/a.test.js", sourcePath: "src/a.js", casesGenerated: 1, content: "// ok" },
+    ],
+    summary: "hello <script>@admin</script> `cmd`",
+  });
+  const res = await agent.execute(prRequest(testgen), context({ binding: testgen, scm, runtime }));
+  assert.equal(res.status, "succeeded");
+  assert.equal(res.artifacts.length, 1);
+  assert.match(scm.comments[0].body, /&lt;script&gt;@/);
+  assert.doesNotMatch(scm.comments[0].body, /<script>/);
+});

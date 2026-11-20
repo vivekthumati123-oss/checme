@@ -36,20 +36,22 @@ function resolveCoverageFilePathForModule(
   langConfig: LanguageConfig,
   manifestFile: ManifestFile,
 ): string {
-  const configuredAbs = path.resolve(workspaceRoot, langConfig.coverageFile);
-  if (existsSync(configuredAbs) || manifestFile.language !== "java") {
-    return langConfig.coverageFile;
-  }
-  const srcMarker = manifestFile.path.indexOf("/src/");
-  if (srcMarker > 0) {
-    const moduleRel = manifestFile.path.slice(0, srcMarker);
-    const covBase = langConfig.coverageFile.replace(/^\.\//, "");
-    const candidate = `${moduleRel}/${covBase}`;
-    if (existsSync(path.join(workspaceRoot, candidate))) {
-      return candidate;
+  const wdRel = langConfig.workingDirectory?.trim() || ".";
+  const covBase = langConfig.coverageFile.replace(/^\.\//, "");
+  const fallbackAbs = path.isAbsolute(langConfig.coverageFile)
+    ? langConfig.coverageFile
+    : path.resolve(workspaceRoot, wdRel, langConfig.coverageFile);
+  if (manifestFile.language === "java") {
+    const srcMarker = manifestFile.path.indexOf("/src/");
+    if (srcMarker > 0) {
+      const moduleRel = manifestFile.path.slice(0, srcMarker);
+      const candidateAbs = path.resolve(workspaceRoot, moduleRel, covBase);
+      if (existsSync(candidateAbs)) {
+        return candidateAbs;
+      }
     }
   }
-  return langConfig.coverageFile;
+  return existsSync(fallbackAbs) ? fallbackAbs : langConfig.coverageFile;
 }
 
 export function evaluateFileCoverageGain(params: {
@@ -117,8 +119,9 @@ export function evaluateFileCoverageGain(params: {
 
     const afterPct = mapped && !mapped.estimated ? mapped.coveragePct : sym.coveragePct;
     const afterCovered = mapped && !mapped.estimated ? mapped.coveredLines : sym.coveredLines;
-    if (afterCovered > sym.coveredLines) {
-      gainedLines += afterCovered - sym.coveredLines;
+    const baselineCovered = params.baselineMap === null ? 0 : sym.coveredLines;
+    if (afterCovered > baselineCovered) {
+      gainedLines += afterCovered - baselineCovered;
     }
 
     symbolResults.push({

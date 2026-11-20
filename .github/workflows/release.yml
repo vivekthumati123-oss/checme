@@ -52,11 +52,12 @@ jobs:
         run: |
           set -euo pipefail
           STAGE="release-bundle"
+          SAFE_TAG="${UA_TAG//\//-}"
           mkdir -p "$STAGE"
           cp -r dist/* "$STAGE/"
           echo "$UA_TAG" > "$STAGE/VERSION"
           if [ -f LICENSE ]; then cp LICENSE "$STAGE/"; fi
-          zip -r "unit-agent-cli-${UA_TAG}.zip" "$STAGE"
+          zip -r "unit-agent-cli-${SAFE_TAG}.zip" "$STAGE"
       - uses: actions/upload-artifact@v4
         with:
           name: unit-agent-cli-zip

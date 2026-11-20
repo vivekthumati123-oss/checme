@@ -14,6 +14,12 @@ on:
       agent-node-version:
         type: string
         default: "22"
+      agent-repository:
+        type: string
+        default: ""
+      agent-ref:
+        type: string
+        default: ""
     secrets:
       COPILOT_GITHUB_TOKEN:
         required: true
@@ -27,7 +33,36 @@ env:
   UNIT_AGENT_ENABLED: ${{ vars.UNIT_AGENT_ENABLED }}
 
 jobs:
+  agent-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.agent-repository || github.repository }}
+          ref: ${{ inputs.agent-ref || github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "${{ inputs.agent-node-version }}"
+      - shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f dist/cli.js ]; then
+            npm ci --ignore-scripts --no-audit --no-fund >/dev/null
+            npm run build:unit-agent >/dev/null
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ua-agent-dist
+          path: dist
+          retention-days: 1
+          overwrite: true
+
   prepare:
+    needs: agent-bundle
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -45,19 +80,25 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-agent
+      - uses: actions/setup-node@v4
         with:
           node-version: "${{ inputs.agent-node-version }}"
-      - id: guard
-        uses: ./.github/actions/cli
+      - name: Export UA_NODE
+        shell: bash
+        run: echo "UA_NODE=$(node -p 'process.execPath')" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
         with:
-          command: guard
-          github-token: "${{ github.token }}"
+          name: ua-agent-dist
+          path: ${{ runner.temp }}/unit-agent-dist
+      - id: guard
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" guard'
       - id: plan
         if: steps.guard.outcome == 'success' && steps.guard.outputs.proceed == 'true' && steps.guard.outputs.status == 'ok'
-        uses: ./.github/actions/cli
-        with:
-          command: plan
+        shell: bash
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" plan'
       - uses: actions/setup-node@v4
         if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.plan.outputs.languages != '' && steps.plan.outputs.toolchains != '' && contains(fromJSON(steps.plan.outputs.languages), 'javascript') && fromJSON(steps.plan.outputs.toolchains).node.source != 'runner-default'
         with:
@@ -76,24 +117,20 @@ jobs:
           java-version-file: ${{ fromJSON(steps.plan.outputs.toolchains).java.file }}
       - id: install
         if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok'
-        uses: ./.github/actions/cli
-        with:
-          command: install
+        shell: bash
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" install'
       - id: baseline
         if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.install.outputs.status == 'ok'
-        uses: ./.github/actions/cli
-        with:
-          command: baseline
+        shell: bash
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" baseline'
       - id: detect
         if: steps.guard.outputs.proceed == 'true' && steps.plan.outputs.status == 'ok' && steps.install.outputs.status == 'ok' && steps.baseline.outputs.status == 'ok'
-        uses: ./.github/actions/cli
-        with:
-          command: detect
+        shell: bash
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" detect'
       - id: notice
         if: always() && !cancelled()
-        uses: ./.github/actions/cli
-        with:
-          command: notice
+        shell: bash
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" notice'
       - uses: actions/upload-artifact@v4
         if: always() && !cancelled() && steps.guard.outputs.proceed != 'false'
         with:
@@ -103,7 +140,7 @@ jobs:
           overwrite: true
 
   generate:
-    needs: prepare
+    needs: [agent-bundle, prepare]
     if: needs.prepare.outputs.has_work == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -111,18 +148,29 @@ jobs:
     outputs:
       status: ${{ steps.gen.outputs.status }}
     steps:
-      - uses: ./.github/actions/setup-agent
+      - uses: actions/setup-node@v4
         with:
           node-version: "${{ inputs.agent-node-version }}"
       - uses: actions/download-artifact@v4
         with:
+          name: ua-agent-dist
+          path: ${{ runner.temp }}/unit-agent-dist
+      - uses: actions/download-artifact@v4
+        with:
           name: ua-prepare
           path: .unit-agent/prepare
+      - name: Install Copilot SDK runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST_DIR="$RUNNER_TEMP/unit-agent-dist"
+          if [ ! -f "$DIST_DIR/package.json" ]; then printf '{"private":true}\n' > "$DIST_DIR/package.json"; fi
+          npm install --prefix "$DIST_DIR" --ignore-scripts --no-save --no-package-lock --no-audit --no-fund @github/copilot-sdk@1.0.16 >/dev/null
       - id: gen
-        uses: ./.github/actions/cli
-        with:
-          command: generate
-          copilot-token: "${{ secrets.COPILOT_GITHUB_TOKEN }}"
+        shell: bash
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: node --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" generate
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -132,7 +180,7 @@ jobs:
           overwrite: true
 
   validate1:
-    needs: [prepare, generate]
+    needs: [agent-bundle, prepare, generate]
     if: needs.prepare.outputs.has_work == 'true' && needs.generate.result == 'success' && needs.generate.outputs.status == 'ok'
     uses: ./.github/workflows/validate.yml
     permissions:
@@ -150,7 +198,7 @@ jobs:
       agent-node-version: ${{ inputs.agent-node-version }}
 
   repair:
-    needs: [prepare, validate1]
+    needs: [agent-bundle, prepare, validate1]
     if: needs.validate1.outputs.needs_repair == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -158,9 +206,13 @@ jobs:
     outputs:
       status: ${{ steps.rep.outputs.status }}
     steps:
-      - uses: ./.github/actions/setup-agent
+      - uses: actions/setup-node@v4
         with:
           node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-agent-dist
+          path: ${{ runner.temp }}/unit-agent-dist
       - uses: actions/download-artifact@v4
         with:
           name: ua-prepare
@@ -173,11 +225,18 @@ jobs:
         with:
           name: ua-validate1
           path: .unit-agent/validate1
+      - name: Install Copilot SDK runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST_DIR="$RUNNER_TEMP/unit-agent-dist"
+          if [ ! -f "$DIST_DIR/package.json" ]; then printf '{"private":true}\n' > "$DIST_DIR/package.json"; fi
+          npm install --prefix "$DIST_DIR" --ignore-scripts --no-save --no-package-lock --no-audit --no-fund @github/copilot-sdk@1.0.16 >/dev/null
       - id: rep
-        uses: ./.github/actions/cli
-        with:
-          command: repair
-          copilot-token: "${{ secrets.COPILOT_GITHUB_TOKEN }}"
+        shell: bash
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: node --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" repair
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -187,7 +246,7 @@ jobs:
           overwrite: true
 
   validate2:
-    needs: [prepare, repair]
+    needs: [agent-bundle, prepare, repair]
     if: needs.repair.result == 'success' && needs.repair.outputs.status == 'ok'
     uses: ./.github/workflows/validate.yml
     permissions:
@@ -205,11 +264,13 @@ jobs:
       agent-node-version: ${{ inputs.agent-node-version }}
 
   publish:
-    needs: [prepare, generate, validate1, repair, validate2]
+    needs: [agent-bundle, prepare, generate, validate1, repair, validate2]
     if: always() && !cancelled() && needs.prepare.result != 'cancelled' && needs.prepare.outputs.guard_skip != 'true' && (needs.prepare.outputs.has_work == 'true' || needs.prepare.outputs.has_notice == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read
+      actions: read
       pull-requests: write
     outputs:
       has_tests: ${{ steps.pub.outputs.has_tests }}
@@ -219,9 +280,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: ./.github/actions/setup-agent
+      - uses: actions/setup-node@v4
         with:
           node-version: "${{ inputs.agent-node-version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-agent-dist
+          path: ${{ runner.temp }}/unit-agent-dist
       - uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -264,13 +329,13 @@ jobs:
           name: ua-validate2
           path: .unit-agent/validate2
       - id: pub
-        uses: ./.github/actions/cli
-        with:
-          command: publish
-          github-token: "${{ github.token }}"
-          job-results: "${{ toJSON(needs) }}"
-          approval-environment: "${{ inputs.approval-environment }}"
-          approval-check: "${{ inputs.approval-check }}"
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UA_JOB_RESULTS: ${{ toJSON(needs) }}
+          UA_APPROVAL_ENV: ${{ inputs.approval-environment }}
+          UA_APPROVAL_CHECK: ${{ inputs.approval-check }}
+        run: node --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" publish
       - uses: actions/upload-artifact@v4
         if: always() && !cancelled()
         with:
@@ -281,7 +346,7 @@ jobs:
           if-no-files-found: ignore
 
   approve-and-commit:
-    needs: publish
+    needs: [agent-bundle, publish]
     if: "!cancelled() && needs.publish.result == 'success' && needs.publish.outputs.has_tests == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -291,19 +356,23 @@ jobs:
       actions: read
       pull-requests: write
     steps:
-      - uses: ./.github/actions/setup-agent
+      - uses: actions/setup-node@v4
         with:
           node-version: "${{ inputs.agent-node-version }}"
       - uses: actions/download-artifact@v4
         with:
+          name: ua-agent-dist
+          path: ${{ runner.temp }}/unit-agent-dist
+      - uses: actions/download-artifact@v4
+        with:
           name: ua-final
           path: .unit-agent/final
-      - uses: ./.github/actions/cli
-        with:
-          command: commit
-          args: "--expected-head ${{ github.event.pull_request.head.sha }}"
-          github-token: "${{ github.token }}"
-          commit-token: "${{ secrets.COMMIT_PAT || github.token }}"
-          approval-environment: "${{ inputs.approval-environment }}"
-          approval-check: "${{ inputs.approval-check }}"
+      - shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UA_COMMIT_TOKEN: ${{ secrets.COMMIT_PAT || github.token }}
+          UA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          UA_APPROVAL_ENV: ${{ inputs.approval-environment }}
+          UA_APPROVAL_CHECK: ${{ inputs.approval-check }}
+        run: node --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" commit
 

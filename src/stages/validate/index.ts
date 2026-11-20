@@ -129,11 +129,23 @@ function loadBaselineCoverageMap(workDir: string): CoverageLineMap | null {
   return null;
 }
 
-function clearStaleCoverageFile(workspaceRoot: string, workingDirectory: string, coverageFile: string): void {
+function clearStaleCoverageFile(
+  workspaceRoot: string,
+  workingDirectory: string,
+  coverageFile: string,
+  sourcePath?: string,
+): void {
+  const covBase = coverageFile.replace(/^\.\//, "");
   const candidates = [
     path.resolve(workspaceRoot, coverageFile),
     path.resolve(workspaceRoot, workingDirectory || ".", coverageFile),
   ];
+  if (sourcePath) {
+    const srcMarker = sourcePath.indexOf("/src/");
+    if (srcMarker > 0) {
+      candidates.push(path.resolve(workspaceRoot, sourcePath.slice(0, srcMarker), covBase));
+    }
+  }
   for (const cand of candidates) {
     if (
       isSafeRealPathInsideRoot(path.relative(workspaceRoot, cand), workspaceRoot, { requireRegularFileIfExists: true })
@@ -228,6 +240,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
     phase === "static"
       ? { root: opts.repoRoot, isCopy: false, cleanup: () => undefined }
       : prepareValidationWorkspace(opts.repoRoot, config, opts.local ? "local" : stageName);
+  let staticFormatWorkspace: ReturnType<typeof prepareValidationWorkspace> | null = null;
 
   const preflightChecked = new Map<LanguageKey, { ok: boolean; reason?: FailureReason; detail: string }>();
 
@@ -336,7 +349,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         patterns: langCfg.testPathPatterns,
         generatedSuffix: langCfg.generatedSuffix,
         packageName: javaPackageName,
-        className: mf.testClassName?.replace(/(AgentTest|Tests?|IT)$/, ""),
+        className: mf.language === "java" ? path.posix.parse(mf.path).name : undefined,
       });
 
       const existingTargetAbs = path.join(opts.repoRoot, safeTestRel);
@@ -362,6 +375,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
       }
       gates.push({ gate: "path", status: "pass" });
 
+      const targetSymbolNames = mf.symbols.map((s) => s.qualifiedName);
       // Gate 2: Static AST policy check
       const policyRes = await runStaticPolicyCheck({
         language: mf.language,
@@ -369,6 +383,7 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         content: pf.content,
         importHint: mf.importHint,
         sourcePath: mf.path,
+        targetSymbolNames,
         targetCount: mf.symbols.length,
         maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
         extraBannedImports: config.policy.extraBannedImports,
@@ -407,21 +422,83 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
       const sourceAbs = path.join(opts.repoRoot, mf.path);
       const refSourceContent = existsSync(sourceAbs) ? readFileSync(sourceAbs, "utf8") : undefined;
 
-      // Static-only phase performs EOL/header formatting in memory without executing repo commands
+      // Static-only phase runs format/lint commands in a disposable workspace if configured before freezing the snapshot
       if (phase === "static") {
-        const fmtRes = await runFormatAndLintGate({
-          workspaceRoot: workspace.root,
-          repoRoot: opts.repoRoot,
-          language: mf.language,
-          langConfig: langCfg,
-          config,
-          testPath: safeTestRel,
-          content: pf.content,
-          referenceSourceContent: refSourceContent,
-          runCommands: false,
-        });
+        let fmtRes: Awaited<ReturnType<typeof runFormatAndLintGate>>;
+        if (langCfg.formatCommand || langCfg.lintCommand) {
+          staticFormatWorkspace ??= prepareValidationWorkspace(opts.repoRoot, config, opts.local ? "local" : stageName);
+          if (
+            !isSafeRealPathInsideRoot(safeTestRel, staticFormatWorkspace.root, {
+              allowMissingLeaf: true,
+              requireRegularFileIfExists: true,
+            })
+          ) {
+            gates.push({ gate: "path", status: "fail", detail: `Unsafe path "${safeTestRel}" in format workspace.` });
+            fileReports.push({
+              fileId: pf.fileId,
+              testPath: safeTestRel,
+              outcome: "rejected",
+              reason: "path_violation",
+              gates,
+              tests: [],
+              sha256: null,
+            });
+            rejected.push({ testPath: safeTestRel, reason: "path_violation" });
+            continue;
+          }
+          const fmtTestAbs = path.join(staticFormatWorkspace.root, safeTestRel);
+          const existedInFmt = existsSync(fmtTestAbs);
+          const priorInFmt = existedInFmt ? readFileSync(fmtTestAbs, "utf8") : null;
+          try {
+            mkdirSync(path.dirname(fmtTestAbs), { recursive: true });
+            writeFileSync(fmtTestAbs, pf.content, "utf8");
+            fmtRes = await runFormatAndLintGate({
+              workspaceRoot: staticFormatWorkspace.root,
+              repoRoot: opts.repoRoot,
+              language: mf.language,
+              langConfig: langCfg,
+              config,
+              testPath: safeTestRel,
+              content: pf.content,
+              referenceSourceContent: refSourceContent,
+              runCommands: true,
+            });
+          } finally {
+            if (
+              isSafeRealPathInsideRoot(safeTestRel, staticFormatWorkspace.root, {
+                allowMissingLeaf: true,
+                requireRegularFileIfExists: true,
+              })
+            ) {
+              if (existedInFmt && priorInFmt !== null) {
+                writeFileSync(fmtTestAbs, priorInFmt, "utf8");
+              } else {
+                rmSync(fmtTestAbs, { force: true });
+              }
+            }
+          }
+        } else {
+          fmtRes = await runFormatAndLintGate({
+            workspaceRoot: workspace.root,
+            repoRoot: opts.repoRoot,
+            language: mf.language,
+            langConfig: langCfg,
+            config,
+            testPath: safeTestRel,
+            content: pf.content,
+            referenceSourceContent: refSourceContent,
+            runCommands: false,
+          });
+        }
         if (!fmtRes.ok) {
           gates.push({ gate: "format", status: "fail", detail: fmtRes.detail });
+          if (fmtRes.reason === "environment_error") {
+            envErrorBlock = {
+              command: langCfg.lintCommand ?? langCfg.formatCommand ?? langCfg.testCommand,
+              outputTail: sanitizeFailureOutput(fmtRes.detail ?? "", { repoRoot: opts.repoRoot }),
+              reason: "environment_error",
+            };
+          }
           fileReports.push({
             fileId: pf.fileId,
             testPath: safeTestRel,
@@ -435,6 +512,35 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           continue;
         }
         gates.push({ gate: "format", status: "pass" });
+        if (langCfg.formatCommand) {
+          const postFmtPolicy = await runStaticPolicyCheck({
+            language: mf.language,
+            testPath: safeTestRel,
+            content: fmtRes.formattedContent,
+            importHint: mf.importHint,
+            sourcePath: mf.path,
+            targetSymbolNames,
+            targetCount: mf.symbols.length,
+            maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
+            extraBannedImports: config.policy.extraBannedImports,
+            wasmDir: opts.wasmDir,
+          });
+          if (!postFmtPolicy.ok) {
+            const detail = postFmtPolicy.violations.map((v) => `${v.rule}: ${v.message}`).join("; ");
+            gates.push({ gate: "static", status: "fail", detail: `Post-format policy failure: ${detail}` });
+            fileReports.push({
+              fileId: pf.fileId,
+              testPath: safeTestRel,
+              outcome: "rejected",
+              reason: "policy_violation",
+              gates,
+              tests: [],
+              sha256: null,
+            });
+            rejected.push({ testPath: safeTestRel, reason: detail });
+            continue;
+          }
+        }
         storeSnapshotValidatedContent({
           workDir: opts.workDir,
           attempt: snapAttempt,
@@ -546,20 +652,25 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         if (!workspace.isCopy) {
           recordPlacedFile(opts.workDir, safeTestRel, Boolean(opts.local));
         }
+        const existingSnapFile = path.join(opts.workDir, snapDirKey, "validated", safeTestRel);
+        const hasFrozenSnap = phase === "run" && existsSync(existingSnapFile);
+        const initialContent = hasFrozenSnap ? readFileSync(existingSnapFile, "utf8") : pf.content;
         mkdirSync(path.dirname(workspaceTestAbs), { recursive: true });
-        writeFileSync(workspaceTestAbs, pf.content, "utf8");
+        writeFileSync(workspaceTestAbs, initialContent, "utf8");
 
-        const fmtRes = await runFormatAndLintGate({
-          workspaceRoot: workspace.root,
-          repoRoot: opts.repoRoot,
-          language: mf.language,
-          langConfig: langCfg,
-          config,
-          testPath: safeTestRel,
-          content: pf.content,
-          referenceSourceContent: refSourceContent,
-          runCommands: true,
-        });
+        const fmtRes = hasFrozenSnap
+          ? { ok: true as const, formattedContent: initialContent, sha256: sha256Hex(initialContent) }
+          : await runFormatAndLintGate({
+              workspaceRoot: workspace.root,
+              repoRoot: opts.repoRoot,
+              language: mf.language,
+              langConfig: langCfg,
+              config,
+              testPath: safeTestRel,
+              content: pf.content,
+              referenceSourceContent: refSourceContent,
+              runCommands: true,
+            });
 
         if (!fmtRes.ok) {
           gates.push({ gate: "format", status: "fail", detail: fmtRes.detail });
@@ -585,13 +696,14 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
         gates.push({ gate: "format", status: "pass" });
         gates.push({ gate: "preflight", status: "pass" });
 
-        if (langCfg.formatCommand) {
+        if (!hasFrozenSnap && langCfg.formatCommand) {
           const postFmtPolicy = await runStaticPolicyCheck({
             language: mf.language,
             testPath: safeTestRel,
             content: fmtRes.formattedContent,
             importHint: mf.importHint,
             sourcePath: mf.path,
+            targetSymbolNames,
             targetCount: mf.symbols.length,
             maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
             extraBannedImports: config.policy.extraBannedImports,
@@ -614,35 +726,28 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           }
         }
 
-        const existingSnapFile = path.join(opts.workDir, snapDirKey, "validated", safeTestRel);
-        if (phase !== "run" || !existsSync(existingSnapFile)) {
+        if (!hasFrozenSnap) {
           storeSnapshotValidatedContent({
             workDir: opts.workDir,
             attempt: snapAttempt,
             testPath: safeTestRel,
             content: fmtRes.formattedContent,
           });
-        } else if (langCfg.formatCommand && phase === "run") {
-          // Ensure CI run phase with formatCommand updates snapshot file inside same validate job artifact if needed
-          const existingSnapBytes = readFileSync(existingSnapFile, "utf8");
-          if (existingSnapBytes !== fmtRes.formattedContent) {
-            storeSnapshotValidatedContent({
-              workDir: opts.workDir,
-              attempt: snapAttempt,
-              testPath: safeTestRel,
-              content: fmtRes.formattedContent,
-            });
-          }
         }
 
         const beforeSnaps = listSnapshotFiles(workspace.root);
         let currentContent = fmtRes.formattedContent;
-        clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile);
+        clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile, mf.path);
         let runRes = await runSingleFileTests(fw.framework, runnerReq);
         const afterSnaps = listSnapshotFiles(workspace.root);
 
         const newSnaps = [...afterSnaps].filter((s) => !beforeSnaps.has(s));
         if (newSnaps.length > 0) {
+          for (const snapRel of newSnaps) {
+            if (isSafeRealPathInsideRoot(snapRel, workspace.root, { requireRegularFileIfExists: true })) {
+              rmSync(path.join(workspace.root, snapRel), { force: true });
+            }
+          }
           gates.push({
             gate: "snapshot",
             status: "fail",
@@ -730,10 +835,68 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
                 extraBannedImports: config.policy.extraBannedImports,
                 wasmDir: opts.wasmDir,
               });
-              if (postPrunePolicy.ok) {
+              if (
+                postPrunePolicy.ok &&
+                isSafeRealPathInsideRoot(safeTestRel, workspace.root, {
+                  allowMissingLeaf: true,
+                  requireRegularFileIfExists: true,
+                })
+              ) {
                 writeFileSync(workspaceTestAbs, derived.content, "utf8");
-                clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile);
+                clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile, mf.path);
                 const rerun = await runSingleFileTests(fw.framework, runnerReq);
+                const afterRerunSnaps = listSnapshotFiles(workspace.root);
+                const newRerunSnaps = [...afterRerunSnaps].filter((s) => !beforeSnaps.has(s));
+                if (newRerunSnaps.length > 0) {
+                  for (const snapRel of newRerunSnaps) {
+                    if (isSafeRealPathInsideRoot(snapRel, workspace.root, { requireRegularFileIfExists: true })) {
+                      rmSync(path.join(workspace.root, snapRel), { force: true });
+                    }
+                  }
+                  gates.push({
+                    gate: "snapshot",
+                    status: "fail",
+                    detail: `Unintended snapshot files created during prune rerun: ${newRerunSnaps.join(", ")}`,
+                  });
+                  fileReports.push({
+                    fileId: pf.fileId,
+                    testPath: safeTestRel,
+                    outcome: "rejected",
+                    reason: "policy_violation",
+                    logPath: normalizeSlashes(path.posix.join(stageDirName, logRel)),
+                    gates,
+                    tests: testResults,
+                    sha256: null,
+                  });
+                  rejected.push({ testPath: safeTestRel, reason: `unintended snapshots: ${newRerunSnaps.join(", ")}` });
+                  continue;
+                }
+                const rerunReason = rerun.failureReason ?? "generated_test_failure";
+                if (
+                  rerun.exitCode !== 0 &&
+                  (ENVIRONMENT_FAILURE_REASONS.has(rerunReason) || rerunReason === "timeout")
+                ) {
+                  gates.push({ gate: "run", status: "fail", detail: rerun.failureDetail ?? rerunReason });
+                  envErrorBlock = {
+                    command: rerun.commandString,
+                    outputTail: sanitizeFailureOutput(`${rerun.stdout}\n${rerun.stderr}`, {
+                      repoRoot: workspace.root,
+                    }),
+                    reason: rerunReason,
+                  };
+                  fileReports.push({
+                    fileId: pf.fileId,
+                    testPath: safeTestRel,
+                    outcome: "environment_error",
+                    reason: rerunReason,
+                    logPath: normalizeSlashes(path.posix.join(stageDirName, logRel)),
+                    gates,
+                    tests: testResults,
+                    sha256: null,
+                  });
+                  rejected.push({ testPath: safeTestRel, reason: rerunReason });
+                  continue;
+                }
                 if (rerun.exitCode === 0) {
                   currentContent = derived.content;
                   prunedTests = derived.prunedNames;
@@ -835,12 +998,19 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
                 content: derivedFlake.content,
                 importHint: mf.importHint,
                 sourcePath: mf.path,
+                targetSymbolNames,
                 targetCount: mf.symbols.length,
                 maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
                 extraBannedImports: config.policy.extraBannedImports,
                 wasmDir: opts.wasmDir,
               });
-              if (postFlakePolicy.ok) {
+              if (
+                postFlakePolicy.ok &&
+                isSafeRealPathInsideRoot(safeTestRel, workspace.root, {
+                  allowMissingLeaf: true,
+                  requireRegularFileIfExists: true,
+                })
+              ) {
                 writeFileSync(workspaceTestAbs, derivedFlake.content, "utf8");
                 const confirm = await runFlakeCheck({
                   framework: fw.framework,
@@ -870,8 +1040,60 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
                   continue;
                 }
                 if (confirm.ok) {
-                  clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile);
+                  clearStaleCoverageFile(workspace.root, langCfg.workingDirectory, langCfg.coverageFile, mf.path);
                   const covRerun = await runSingleFileTests(fw.framework, { ...runnerReq, withCoverage: true });
+                  const afterCovSnaps = listSnapshotFiles(workspace.root);
+                  const newCovSnaps = [...afterCovSnaps].filter((s) => !beforeSnaps.has(s));
+                  if (newCovSnaps.length > 0) {
+                    for (const snapRel of newCovSnaps) {
+                      if (isSafeRealPathInsideRoot(snapRel, workspace.root, { requireRegularFileIfExists: true })) {
+                        rmSync(path.join(workspace.root, snapRel), { force: true });
+                      }
+                    }
+                    gates.push({
+                      gate: "snapshot",
+                      status: "fail",
+                      detail: `Unintended snapshot files created during flake rerun: ${newCovSnaps.join(", ")}`,
+                    });
+                    fileReports.push({
+                      fileId: pf.fileId,
+                      testPath: safeTestRel,
+                      outcome: "rejected",
+                      reason: "policy_violation",
+                      logPath: normalizeSlashes(path.posix.join(stageDirName, logRel)),
+                      gates,
+                      tests: testResults,
+                      sha256: null,
+                    });
+                    rejected.push({ testPath: safeTestRel, reason: `unintended snapshots: ${newCovSnaps.join(", ")}` });
+                    continue;
+                  }
+                  const covReason = covRerun.failureReason ?? "generated_test_failure";
+                  if (
+                    covRerun.exitCode !== 0 &&
+                    (ENVIRONMENT_FAILURE_REASONS.has(covReason) || covReason === "timeout")
+                  ) {
+                    gates.push({ gate: "run", status: "fail", detail: covRerun.failureDetail ?? covReason });
+                    envErrorBlock = {
+                      command: covRerun.commandString,
+                      outputTail: sanitizeFailureOutput(`${covRerun.stdout}\n${covRerun.stderr}`, {
+                        repoRoot: workspace.root,
+                      }),
+                      reason: covReason,
+                    };
+                    fileReports.push({
+                      fileId: pf.fileId,
+                      testPath: safeTestRel,
+                      outcome: "environment_error",
+                      reason: covReason,
+                      logPath: normalizeSlashes(path.posix.join(stageDirName, logRel)),
+                      gates,
+                      tests: testResults,
+                      sha256: null,
+                    });
+                    rejected.push({ testPath: safeTestRel, reason: covReason });
+                    continue;
+                  }
                   if (covRerun.exitCode === 0) {
                     currentContent = derivedFlake.content;
                     survivedFlake = true;
@@ -968,17 +1190,25 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
           assumptions: pf.assumptions,
         });
       } finally {
-        if (!workspace.isCopy) {
+        if (
+          isSafeRealPathInsideRoot(safeTestRel, workspace.root, {
+            allowMissingLeaf: true,
+            requireRegularFileIfExists: true,
+          })
+        ) {
           if (existedBeforeRun && priorWorkspaceContent !== null) {
             writeFileSync(workspaceTestAbs, priorWorkspaceContent, "utf8");
           } else {
             rmSync(workspaceTestAbs, { force: true });
           }
+        }
+        if (!workspace.isCopy) {
           unrecordPlacedFile(opts.workDir, safeTestRel, Boolean(opts.local));
         }
       }
     }
   } finally {
+    staticFormatWorkspace?.cleanup();
     workspace.cleanup();
   }
 
@@ -1017,6 +1247,15 @@ export async function runValidate(opts: RunValidateOptions): Promise<{
     try {
       const prevFinal = FinalSchema.parse(JSON.parse(readFileSync(finalJsonPath, "utf8")));
       const byPath = new Map(prevFinal.files.map((f) => [f.path, f]));
+      const finalValidatedDir = path.join(opts.workDir, ARTIFACTS.final.dir, "validated");
+      for (const fr of fileReports) {
+        if (fr.outcome !== "accepted" && fr.outcome !== "accepted_pruned") {
+          byPath.delete(fr.testPath);
+          if (isSafeRealPathInsideRoot(fr.testPath, finalValidatedDir, { requireRegularFileIfExists: true })) {
+            rmSync(path.join(finalValidatedDir, fr.testPath), { force: true });
+          }
+        }
+      }
       for (const nf of finalFiles) byPath.set(nf.path, nf);
       mergedFinalFiles = [...byPath.values()];
     } catch {

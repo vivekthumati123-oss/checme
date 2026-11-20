@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 
 const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0").filter(Boolean);
 const TOKEN_RE = /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b/;
-const KEY_RE = /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/;
+const KEY_RE = /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/;
 const ALLOW = [/^fixtures\/logs\//, /^evals\//, /^test\//];
 const problems = [];
 for (const f of files) {

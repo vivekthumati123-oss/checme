@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { ARTIFACTS, type JavaConfig, type LoggerLike, type UnitAgentConfig } from "../../../../contracts";
@@ -134,7 +134,7 @@ export async function runJavaCommandWithWrapperHandling(params: {
   execRes: ExecResult;
   wrapperUnavailable?: { host?: string; detail: string };
 }> {
-  const detectedTool = resolveJavaBuildTool(params.cwd, params.javaConfig).buildTool;
+  const detectedTool = resolveJavaBuildTool(params.cwd, { ...params.javaConfig, workingDirectory: "." }).buildTool;
   const inferredTool: "maven" | "gradle" =
     detectedTool ?? (params.file.toLowerCase().includes("mvn") ? "maven" : "gradle");
   const priorFallback = readJavaWrapperFallback(params.workDir, inferredTool);
@@ -174,7 +174,8 @@ export async function runJavaCommandWithWrapperHandling(params: {
       offlineScriptPath: params.offlineScriptPath,
       killChildrenOnExit: params.killChildrenOnExit,
     });
-    if (retry.exitCode === 0) {
+    const retryCombined = `${retry.stdout}\n${retry.stderr}`;
+    if (!retry.spawnError && !matchWrapperBootstrapFailure(retryCombined).isWrapperError) {
       const warning = `Java wrapper download failed for ${hostLabel}; fell back to system "${systemCmd}". Set strictWrapper: true to disallow fallback or fix wrapper URL.`;
       if (params.workDir) {
         recordJavaWrapperFallback(params.workDir, inferredTool, systemCmd, warning);
@@ -248,8 +249,12 @@ export function resolveJavaExecutionTarget(params: {
   const hasGradle =
     existsSync(path.join(moduleDirAbs, "build.gradle")) ||
     existsSync(path.join(moduleDirAbs, "build.gradle.kts")) ||
+    existsSync(path.join(moduleDirAbs, "settings.gradle")) ||
+    existsSync(path.join(moduleDirAbs, "settings.gradle.kts")) ||
     existsSync(path.join(wdAbs, "build.gradle")) ||
-    existsSync(path.join(wdAbs, "build.gradle.kts"));
+    existsSync(path.join(wdAbs, "build.gradle.kts")) ||
+    existsSync(path.join(wdAbs, "settings.gradle")) ||
+    existsSync(path.join(wdAbs, "settings.gradle.kts"));
 
   let buildTool: "maven" | "gradle";
   if (params.javaConfig.buildTool !== "auto") {
@@ -270,10 +275,10 @@ export function resolveJavaExecutionTarget(params: {
   const wrapperName = buildTool === "gradle" ? "./gradlew" : "./mvnw";
   const systemName = buildTool === "gradle" ? "gradle" : "mvn";
   const wrapperExists =
-    existsSync(path.join(wdAbs, wrapperName)) ||
-    existsSync(path.join(wdAbs, buildTool === "gradle" ? "gradlew.bat" : "mvnw.cmd")) ||
-    existsSync(path.join(moduleDirAbs, wrapperName)) ||
-    existsSync(path.join(moduleDirAbs, buildTool === "gradle" ? "gradlew.bat" : "mvnw.cmd"));
+    process.platform === "win32"
+      ? existsSync(path.join(wdAbs, buildTool === "gradle" ? "gradlew.bat" : "mvnw.cmd")) ||
+        existsSync(path.join(moduleDirAbs, buildTool === "gradle" ? "gradlew.bat" : "mvnw.cmd"))
+      : existsSync(path.join(wdAbs, wrapperName)) || existsSync(path.join(moduleDirAbs, wrapperName));
 
   const fallbackExecutable = readJavaWrapperFallback(params.workDir, buildTool);
 
@@ -308,10 +313,9 @@ export function resolveJavaExecutionTarget(params: {
   };
 }
 
-export function collectJavaXmlTestResults(reportsDirAbs: string, classSimpleName?: string): RunnerTestCase[] {
+function findMatchingJavaXmlFiles(reportsDirAbs: string, classSimpleName?: string): string[] {
   if (!existsSync(reportsDirAbs)) return [];
-  const entries = readdirSync(reportsDirAbs);
-  const matching = entries.filter((f) => {
+  return readdirSync(reportsDirAbs).filter((f) => {
     if (!f.endsWith(".xml") || !f.startsWith("TEST-")) return false;
     if (!classSimpleName) return true;
     return (
@@ -321,7 +325,20 @@ export function collectJavaXmlTestResults(reportsDirAbs: string, classSimpleName
       f.includes(`.${classSimpleName}$`)
     );
   });
+}
 
+export function deleteStaleJavaXmlResults(reportsDirAbs: string, classSimpleName?: string): void {
+  for (const fileName of findMatchingJavaXmlFiles(reportsDirAbs, classSimpleName)) {
+    try {
+      rmSync(path.join(reportsDirAbs, fileName), { force: true });
+    } catch {
+      // best-effort stale XML cleanup
+    }
+  }
+}
+
+export function collectJavaXmlTestResults(reportsDirAbs: string, classSimpleName?: string): RunnerTestCase[] {
+  const matching = findMatchingJavaXmlFiles(reportsDirAbs, classSimpleName);
   const out: RunnerTestCase[] = [];
   for (const fileName of matching) {
     out.push(...parseJunitXmlReport(path.join(reportsDirAbs, fileName)));

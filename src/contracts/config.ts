@@ -12,20 +12,33 @@ const isSafeRelativePath = (value: string): boolean => {
 
 const SafePath = z.string().min(1).refine(isSafeRelativePath, NO_TRAVERSAL_MSG);
 
-const Cmd = z
+const ArgvCmd = z
   .string()
   .refine(
     isArgvOnly,
     "no shell operators (&&, ||, |, ;, >, <, backticks, $()). Put multi-step logic in an npm script or a script file.",
   );
 
-const FilesCmd = Cmd.refine((s) => {
+const Cmd = ArgvCmd.refine((s) => {
   try {
-    return parseArgvTokens(s).includes("{files}");
+    return parseArgvTokens(s).every((t) => !t.includes("{files}"));
   } catch {
     return false;
   }
-}, "must contain standalone {files} token");
+}, "must not contain {files} token");
+
+const FilesCmd = ArgvCmd.refine((s) => {
+  try {
+    const tokens = parseArgvTokens(s);
+    return (
+      tokens[0] !== "{files}" &&
+      tokens.slice(1).includes("{files}") &&
+      tokens.every((t) => t === "{files}" || !t.includes("{files}"))
+    );
+  } catch {
+    return false;
+  }
+}, "must contain standalone {files} token after executable");
 
 export const FrameworkEnum = z.enum(["auto", "jest", "vitest", "pytest", "junit5"], {
   error:
@@ -45,7 +58,12 @@ export const LanguageConfigSchema = z
     coverageFormat: z.enum(["lcov", "cobertura", "jacoco"]),
     sourceGlobs: z.array(SafePath).min(1),
     testPathPatterns: z.array(SafePath).min(1),
-    generatedSuffix: z.string().min(1).default(".unit-agent"),
+    generatedSuffix: z
+      .string()
+      .min(1)
+      .regex(/^[A-Za-z0-9._-]+$/, "must contain only letters, digits, dots, underscores, or hyphens")
+      .refine((v) => !v.includes(".."), "must not contain '..'")
+      .default(".unit-agent"),
     formatCommand: FilesCmd.optional(),
     lintCommand: FilesCmd.optional(),
   })
@@ -173,7 +191,21 @@ export const LocalConfigSchema = z
     reuseCoverage: z.boolean().default(true),
     confirmBeforeRun: z.boolean().default(true),
     stageApplied: z.boolean().default(false),
-    nodeCommand: z.string().min(1).default("node"),
+    nodeCommand: z
+      .string()
+      .min(1)
+      .refine(
+        (v) => !/[\r\n\0]/.test(v) && isArgvOnly(v),
+        "must be a safe single command token without shell operators",
+      )
+      .refine((v) => {
+        try {
+          return parseArgvTokens(v).length === 1;
+        } catch {
+          return false;
+        }
+      }, "must resolve to a single executable token")
+      .default("node"),
     chatTools: z.array(z.string().min(1)).min(1).default(["read", "edit", "search", "execute"]),
   })
   .strict()
@@ -245,5 +277,5 @@ export type PythonConfig = z.infer<typeof PythonConfigSchema>;
 export type JavaConfig = z.infer<typeof JavaConfigSchema>;
 
 export function exportConfigJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(ConfigSchema) as Record<string, unknown>;
+  return z.toJSONSchema(ConfigSchema, { io: "input" }) as Record<string, unknown>;
 }

@@ -65,6 +65,13 @@ function stripProxyCredentials(rawUrl: string): string {
   return rawUrl;
 }
 
+function stripJvmProxySecrets(raw: string): string {
+  return raw
+    .replace(/-Dhttps?\.proxyPassword=\S+/gi, "")
+    .replace(/((?:https?|socks5h?|ftp):\/\/)[^/@\s]+@/gi, "$1")
+    .trim();
+}
+
 function setEnvCaseAware(target: Record<string, string>, key: string, value: string): void {
   if (process.platform === "win32") {
     const upper = key.toUpperCase();
@@ -118,6 +125,9 @@ export function buildChildEnv(
   }
 
   for (const key of cfg?.env.pass ?? []) {
+    if (cfg?.env.passProxy === false && PROXY_KEY_UPPER.has(key.toUpperCase())) {
+      continue;
+    }
     const val = parentEnv[key];
     if (typeof val === "string") {
       setEnvCaseAware(result, key, val);
@@ -142,6 +152,11 @@ export function buildChildEnv(
       continue;
     }
     if (PROXY_KEY_SET.has(key) || PROXY_KEY_UPPER.has(upper)) {
+      if (URL_PROXY_KEYS_UPPER.has(upper)) {
+        result[key] = stripProxyCredentials(result[key]!);
+      } else if (upper === "GRADLE_OPTS" || upper === "MAVEN_OPTS") {
+        result[key] = stripJvmProxySecrets(result[key]!);
+      }
       continue;
     }
     if (SECRET_ENV_KEY_RE.test(key)) {
@@ -297,7 +312,10 @@ function validateWin32BatchArg(arg: string): void {
 function quoteWin32BatchArg(arg: string): string {
   validateWin32BatchArg(arg);
   if (arg.length === 0) return '""';
-  return /[\s\t&|<>()^;=]/.test(arg) ? `"${arg}"` : arg;
+  if (!/[\s\t&|<>()^;=,]/.test(arg)) return arg;
+  const trailingMatch = /\\+$/.exec(arg);
+  const escaped = trailingMatch ? `${arg}${"\\".repeat(trailingMatch[0].length)}` : arg;
+  return `"${escaped}"`;
 }
 
 function quoteWin32Arg(arg: string, quoteTrigger: RegExp = /[\s\t\n\v"]/): string {
@@ -376,20 +394,27 @@ function buildWinBrokerScript(): string {
     "$cs = [System.Runtime.InteropServices.CharSet]::Unicode",
     "$ma = [System.Reflection.MethodAttributes]'Public, Static'",
     "$mc = [System.Reflection.CallingConventions]::Standard",
-    "function F($n, $r, $p) { $tb.DefinePInvokeMethod($n, 'kernel32.dll', $ma, $mc, $r, $p, $cc, $cs).SetImplementationFlags(128) }",
+    "$dllAttrCtor = [System.Runtime.InteropServices.DllImportAttribute].GetConstructor(@([string]))",
+    "$dllFields = [System.Reflection.FieldInfo[]]@([System.Runtime.InteropServices.DllImportAttribute].GetField('SetLastError'), [System.Runtime.InteropServices.DllImportAttribute].GetField('CharSet'), [System.Runtime.InteropServices.DllImportAttribute].GetField('CallingConvention'))",
+    "$dllVals = [object[]]@($true, [System.Runtime.InteropServices.CharSet]::Unicode, [System.Runtime.InteropServices.CallingConvention]::Winapi)",
+    "$setLastErrAttr = New-Object System.Reflection.Emit.CustomAttributeBuilder($dllAttrCtor, @('kernel32.dll'), $dllFields, $dllVals)",
+    "function F($n, $r, $p) { $mb = $tb.DefinePInvokeMethod($n, 'kernel32.dll', $ma, $mc, $r, $p, $cc, $cs); $mb.SetImplementationFlags(128); $mb.SetCustomAttribute($setLastErrAttr) }",
     "F 'CreateJobObjectW' ([IntPtr]) @([IntPtr], [IntPtr])",
     "F 'SetInformationJobObject' ([bool]) @([IntPtr], [int], [IntPtr], [uint32])",
     "F 'AssignProcessToJobObject' ([bool]) @([IntPtr], [IntPtr])",
     "F 'CreateProcessW' ([bool]) @([IntPtr], [IntPtr], [IntPtr], [IntPtr], [bool], [uint32], [IntPtr], [IntPtr], [IntPtr], [IntPtr])",
     "F 'CreateFileW' ([IntPtr]) @([string], [uint32], [uint32], [IntPtr], [uint32], [uint32], [IntPtr])",
+    "F 'GetStdHandle' ([IntPtr]) @([int])",
+    "F 'SetHandleInformation' ([bool]) @([IntPtr], [uint32], [uint32])",
     "F 'ResumeThread' ([uint32]) @([IntPtr])",
     "F 'WaitForSingleObject' ([uint32]) @([IntPtr], [uint32])",
     "F 'GetExitCodeProcess' ([bool]) @([IntPtr], [uint32].MakeByRefType())",
     "F 'TerminateJobObject' ([bool]) @([IntPtr], [uint32])",
+    "F 'TerminateProcess' ([bool]) @([IntPtr], [uint32])",
     "F 'CloseHandle' ([bool]) @([IntPtr])",
-    "F 'GetLastError' ([uint32]) @()",
     "$k = $tb.CreateType()",
     "$M = [System.Runtime.InteropServices.Marshal]",
+    "foreach ($stdId in @(-10, -11, -12)) { $hStd = $k::GetStdHandle($stdId); if ($hStd -ne [IntPtr]::Zero -and $hStd -ne [IntPtr](-1)) { [void]$k::SetHandleInformation($hStd, 1, 0) } }",
     "$E = [System.Text.Encoding]::UTF8",
     "$pool = [RunspaceFactory]::CreateRunspacePool(1, 16)",
     "$pool.Open()",
@@ -443,7 +468,7 @@ function buildWinBrokerScript(): string {
     "    $M::FreeHGlobal($sa); $sa = [IntPtr]::Zero",
     "    $inv = [IntPtr](-1)",
     "    if ($hOut -eq $inv -or $hErr -eq $inv) {",
-    "      $err = $k::GetLastError()",
+    "      $err = $M::GetLastWin32Error()",
     "      if ($hIn -ne $inv) { [void]$k::CloseHandle($hIn) }",
     "      if ($hOut -ne $inv) { [void]$k::CloseHandle($hOut) }",
     "      if ($hErr -ne $inv) { [void]$k::CloseHandle($hErr) }",
@@ -458,7 +483,7 @@ function buildWinBrokerScript(): string {
     "    $okJob = $k::SetInformationJobObject($hJob, 9, $jBuf, [uint32]$jSz)",
     "    $M::FreeHGlobal($jBuf)",
     "    if ($hJob -eq [IntPtr]::Zero -or -not $okJob) {",
-    "      $err = $k::GetLastError()",
+    "      $err = $M::GetLastWin32Error()",
     "      if ($hIn -ne $inv) { [void]$k::CloseHandle($hIn) }",
     "      [void]$k::CloseHandle($hOut); [void]$k::CloseHandle($hErr)",
     "      if ($hJob -ne [IntPtr]::Zero) { [void]$k::CloseHandle($hJob) }",
@@ -480,7 +505,7 @@ function buildWinBrokerScript(): string {
     "    $M::WriteIntPtr($si, $(if ($is64) { 96 } else { 64 }), $hErr)",
     "    $pi = $M::AllocHGlobal(24)",
     "    $okProc = $k::CreateProcessW($appPtr, $cmdPtr, [IntPtr]::Zero, [IntPtr]::Zero, $true, 0x08000404, $envPtr, $cwdPtr, $si, $pi)",
-    "    $errProc = $k::GetLastError()",
+    "    $errProc = $M::GetLastWin32Error()",
     "    $M::FreeHGlobal($appPtr); $M::FreeHGlobal($cmdPtr); $M::FreeHGlobal($cwdPtr); $M::FreeHGlobal($envPtr); $M::FreeHGlobal($si)",
     "    if ($hIn -ne $inv) { [void]$k::CloseHandle($hIn) }",
     "    [void]$k::CloseHandle($hOut); [void]$k::CloseHandle($hErr)",
@@ -491,7 +516,8 @@ function buildWinBrokerScript(): string {
     "    }",
     "    $hProc = $M::ReadIntPtr($pi, 0); $hThread = $M::ReadIntPtr($pi, [IntPtr]::Size); $M::FreeHGlobal($pi)",
     "    if (-not $k::AssignProcessToJobObject($hJob, $hProc)) {",
-    "      $errAssign = $k::GetLastError()",
+    "      $errAssign = $M::GetLastWin32Error()",
+    "      [void]$k::TerminateProcess($hProc, 1)",
     "      [void]$k::CloseHandle($hThread); [void]$k::CloseHandle($hProc); [void]$k::TerminateJobObject($hJob, 1); [void]$k::CloseHandle($hJob)",
     '      WriteOut "FAIL|$id|$errAssign"',
     "      continue",
@@ -580,6 +606,7 @@ function ensureWinBroker(): WinBrokerChild {
   };
   child.once("exit", failPending);
   child.once("error", failPending);
+  child.stdin.on("error", failPending);
 
   if (!winExitHookRegistered) {
     winExitHookRegistered = true;
@@ -684,7 +711,7 @@ async function runInWindowsJob(
   let cmdLine: string;
   if (isBatch) {
     validateWin32BatchArg(resolvedExe);
-    const exeToken = /[\s\t&|<>()^;=]/.test(resolvedExe) ? `"${resolvedExe}"` : resolvedExe;
+    const exeToken = /[\s\t&|<>()^;=,]/.test(resolvedExe) ? `"${resolvedExe}"` : resolvedExe;
     const inner = `${exeToken}${args.length > 0 ? ` ${args.map(quoteWin32BatchArg).join(" ")}` : ""}`;
     cmdLine = `${quoteWin32Arg(appName)} /d /v:off /s /c "${inner}"`;
   } else {
@@ -846,6 +873,8 @@ export async function runCommand(
     stderr: unknown;
     all?: unknown;
     timedOut: boolean;
+    isTerminated?: boolean;
+    isMaxBuffer?: boolean;
     failed: boolean;
     shortMessage?: string;
     message?: string;
@@ -881,14 +910,41 @@ export async function runCommand(
         commandString,
       };
     }
-    res = await runInWindowsJob(resolvedExe, args, options.cwd, env, timeoutMs);
+    try {
+      res = await runInWindowsJob(resolvedExe, args, options.cwd, env, timeoutMs);
+    } catch (err) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: "",
+        all: "",
+        timedOut: false,
+        spawnError: err instanceof Error ? err.message : String(err),
+        notes,
+        commandString,
+      };
+    }
   } else if (process.platform === "win32" && resolvedExe && /\.(cmd|bat)$/i.test(resolvedExe)) {
-    validateWin32BatchArg(resolvedExe);
+    let inner: string;
+    try {
+      validateWin32BatchArg(resolvedExe);
+      const exeToken = /[\s\t&|<>()^;=,]/.test(resolvedExe) ? `"${resolvedExe}"` : resolvedExe;
+      inner = `${exeToken}${args.length > 0 ? ` ${args.map(quoteWin32BatchArg).join(" ")}` : ""}`;
+    } catch (err) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: "",
+        all: "",
+        timedOut: false,
+        spawnError: err instanceof Error ? err.message : String(err),
+        notes,
+        commandString,
+      };
+    }
     const sysRoot = env.SystemRoot || env.SYSTEMROOT || process.env.SystemRoot || "C:\\Windows";
     const comspec = env.ComSpec || env.COMSPEC || path.join(sysRoot, "System32", "cmd.exe");
-    const exeToken = /[\s\t&|<>()^;=]/.test(resolvedExe) ? `"${resolvedExe}"` : resolvedExe;
-    const inner = `${exeToken}${args.length > 0 ? ` ${args.map(quoteWin32BatchArg).join(" ")}` : ""}`;
-    res = await execa(comspec, ["/d", "/v:off", "/s", "/c", `"${inner}"`], {
+    const child = execa(comspec, ["/d", "/v:off", "/s", "/c", `"${inner}"`], {
       cwd: options.cwd,
       env,
       extendEnv: false,
@@ -900,6 +956,28 @@ export async function runCommand(
       maxBuffer: 1_000_000,
       all: true,
     });
+    const pid = child.pid;
+    let forcedTimeout = false;
+    const forceTimer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            forcedTimeout = true;
+            void killProcessTree(pid);
+          }, timeoutMs + 250)
+        : null;
+    let awaited: Awaited<typeof child> | undefined;
+    try {
+      awaited = await child;
+    } finally {
+      if (forceTimer) clearTimeout(forceTimer);
+      if (awaited?.timedOut || forcedTimeout) {
+        await killProcessTree(pid);
+      }
+    }
+    res =
+      awaited && forcedTimeout && !awaited.timedOut
+        ? { ...awaited, timedOut: true, message: awaited.message }
+        : awaited;
   } else {
     const treeId =
       options.killChildrenOnExit && process.platform !== "win32"
@@ -947,7 +1025,10 @@ export async function runCommand(
         }
       }
     }
-    res = awaited && forcedTimeout && !awaited.timedOut ? { ...awaited, timedOut: true } : awaited;
+    res =
+      awaited && forcedTimeout && !awaited.timedOut
+        ? { ...awaited, timedOut: true, message: awaited.message }
+        : awaited;
   }
 
   const stdout = typeof res.stdout === "string" ? res.stdout : "";
@@ -960,7 +1041,13 @@ export async function runCommand(
       (!stdout.trim() && !stderr.trim() && !resolvedExe));
   const spawnError =
     res.spawnErrorOverride ??
-    (res.failed && (res.exitCode === undefined || isMissingWinCmd) ? (res.shortMessage ?? res.message) : undefined);
+    (!res.timedOut &&
+    !res.isTerminated &&
+    !res.isMaxBuffer &&
+    res.failed &&
+    (res.exitCode === undefined || isMissingWinCmd)
+      ? (res.shortMessage ?? res.message)
+      : undefined);
 
   return {
     exitCode: typeof res.exitCode === "number" ? res.exitCode : res.timedOut ? 124 : 1,

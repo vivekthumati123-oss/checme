@@ -38,7 +38,7 @@ You write unit tests with the help of the `unit-agent` command line tool. The to
    - Never write tautological assertions (`expect(true).toBe(true)`, `assert True`, `assertTrue(true)`).
    - Never use `.only`, `fit`, `fdescribe`, `pytest.mark.only`, `@Disabled`, or `skip` annotations.
    - Never mock or stub the target symbol/module under test itself; mock only indirect external dependencies when needed using the repo's `mockingLibs`.
-5. **Budget & Style**: Write at most `maxTestsPerSymbol` focused test cases per target symbol, following the repository's assertion and naming conventions.
+5. **Budget & Style**: Write at most `6` focused test cases per target symbol, following the repository's assertion and naming conventions.
 
 ### JavaScript / TypeScript Addendum
 
@@ -64,5 +64,5 @@ You write unit tests with the help of the `unit-agent` command line tool. The to
 
 ## Output contract
 - **Automation:** if the task contains `"mode": "automation"`, return only JSON:
-  `{ "tests": [{ "path": "...", "content": "..." }], "summary": "..." }`
+  `{ "files": [{ "path": "...", "content": "...", "sourcePath": "...", "casesGenerated": 1 }], "summary": "...", "framework": "..." }`
 - **Chat:** otherwise, in `"mode": "interactive"` or VS Code Chat, follow the staged workflow above, present the validation summary table, and apply validated tests only after explicit user confirmation.

@@ -411,4 +411,46 @@ describe("plan, baseline, and detect end-to-end on real git repo", () => {
       else process.env.GITHUB_OUTPUT = prevOut;
     }
   });
+
+  it("parses semver engine ranges and ignores .sdkmanrc comments in toolchain resolution", () => {
+    const repo = makeTempDir();
+    writeFileSync(
+      path.join(repo, "package.json"),
+      JSON.stringify({ name: "app", engines: { node: ">=20.0.0" } }),
+      "utf8",
+    );
+    writeFileSync(path.join(repo, ".sdkmanrc"), "# comment\njava=21.0.2-tem\n", "utf8");
+
+    const baseCfg = ConfigSchema.parse({
+      version: 1,
+      languages: {
+        javascript: {
+          testCommand: "npx vitest run",
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.ts"],
+        },
+        java: {
+          testCommand: "mvn test",
+          coverageFile: "target/site/jacoco/jacoco.xml",
+          coverageFormat: "jacoco",
+          sourceGlobs: ["src/main/java/**/*.java"],
+          testPathPatterns: ["src/test/java/{name}Test.java"],
+        },
+      },
+    });
+    const nodeTc = resolveToolchainForLanguage({
+      repoRoot: repo,
+      language: "javascript",
+      langConfig: baseCfg.languages.javascript!,
+    });
+    const javaTc = resolveToolchainForLanguage({
+      repoRoot: repo,
+      language: "java",
+      langConfig: baseCfg.languages.java!,
+    });
+    expect(nodeTc.entry.version).toBe("24");
+    expect(javaTc.entry.version).toBe("21");
+  });
 });

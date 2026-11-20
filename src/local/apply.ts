@@ -14,6 +14,7 @@ import {
   type UnitAgentConfig,
   type ValidationReport,
 } from "../contracts";
+import { checkCommitPath } from "../core/commit-paths";
 import { sha256Hex } from "../core/context";
 import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes, toRepoPath } from "../core/paths";
 import { runStaticPolicyCheck } from "../core/policy";
@@ -167,7 +168,7 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
     }
 
     const mf = manifestById.get(fr.fileId);
-    if (!mf) {
+    if (!mf || safeRel !== cleanRepoRelative(normalizeSlashes(mf.testPath)) || !checkCommitPath(safeRel).ok) {
       refused.push({ path: safeRel, reason: "policy" });
       exitCode = EXIT_CODES.POLICY_OR_HASH;
       continue;
@@ -209,6 +210,11 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
         isSafeRealPathInsideRoot(safeRel, snapValidatedRoot, { requireRegularFileIfExists: true })
       ) {
         const snapBytes = readFileSync(snapFile, "utf8");
+        if (fr.sha256 && sha256Hex(snapBytes) !== fr.sha256) {
+          refused.push({ path: safeRel, reason: "hash_mismatch" });
+          exitCode = EXIT_CODES.POLICY_OR_HASH;
+          continue;
+        }
         const derived = await deriveFinalContent({
           language: lang,
           testPath: safeRel,
@@ -220,18 +226,22 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
           referenceSourceContent: refSourceContent,
           wasmDir: opts.wasmDir,
         });
-        if (fr.finalSha256 && sha256Hex(derived.content) !== fr.finalSha256) {
+        if (!fr.finalSha256 || sha256Hex(derived.content) !== fr.finalSha256) {
           refused.push({ path: safeRel, reason: "hash_mismatch" });
           exitCode = EXIT_CODES.POLICY_OR_HASH;
           continue;
         }
         finalContent = derived.content;
-      } else if (!expectedHash || sha256Hex(finalContent) !== expectedHash) {
+      } else if (!fr.finalSha256 || sha256Hex(finalContent) !== fr.finalSha256) {
         refused.push({ path: safeRel, reason: "hash_mismatch" });
         exitCode = EXIT_CODES.POLICY_OR_HASH;
         continue;
       }
-    } else if (!expectedHash || sha256Hex(finalContent) !== expectedHash) {
+    } else if (
+      fr.outcome === "accepted_pruned"
+        ? !fr.finalSha256 || sha256Hex(finalContent) !== fr.finalSha256
+        : !expectedHash || sha256Hex(finalContent) !== expectedHash
+    ) {
       refused.push({ path: safeRel, reason: "hash_mismatch" });
       exitCode = EXIT_CODES.POLICY_OR_HASH;
       continue;
@@ -281,7 +291,11 @@ export async function runLocalApply(opts: RunLocalApplyOptions): Promise<RunLoca
 
   // Remove only applied staging files so unrelated drafts under stagingDir stay intact
   const stagingAbs = path.resolve(opts.repoRoot, config.local.stagingDir);
-  if (written.length > 0 && existsSync(stagingAbs)) {
+  if (
+    written.length > 0 &&
+    isSafeRealPathInsideRoot(config.local.stagingDir, opts.repoRoot, { allowMissingLeaf: true }) &&
+    existsSync(stagingAbs)
+  ) {
     for (const w of written) {
       if (!isSafeRealPathInsideRoot(w.path, stagingAbs, { allowMissingLeaf: true })) continue;
       rmSync(path.join(stagingAbs, w.path), { force: true });

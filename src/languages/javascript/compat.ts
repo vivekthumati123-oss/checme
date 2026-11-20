@@ -26,7 +26,7 @@ export const JS_TOOLCHAIN_MISMATCH_PATTERNS: readonly RegExp[] = [
   /requires a node version/i,
   /Unsupported engine/i,
   /The engine "node" is incompatible with this module/i,
-  /ERR_REQUIRE_ESM/,
+  /ERR_REQUIRE_ESM[^\r\n]*node_modules|node_modules[^\r\n]*ERR_REQUIRE_ESM/,
   /NODE_MODULE_VERSION\s+\d+/i,
   /node_modules[/\\].*SyntaxError: Unexpected token/i,
 ];

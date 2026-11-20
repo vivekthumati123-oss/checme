@@ -39,21 +39,33 @@ export function trimContextForMaxChars(packet: FileContext, maxChars: number): F
     copy.referencedSignatures.pop();
   }
 
-  // 4. Trim sourceFile.content cleanly
-  const overhead = JSON.stringify(
-    { ...copy, sourceFile: { ...copy.sourceFile, content: "", truncated: true } },
-    null,
-    2,
-  ).length;
-  if (overhead < maxChars) {
-    const budget = Math.max(0, maxChars - overhead - 32);
-    if (copy.sourceFile.content.length > budget) {
-      copy.sourceFile.content = copy.sourceFile.content.slice(0, budget);
+  // 4. Trim sourceFile.content cleanly using binary search on JSON-serialized length
+  const emptySourceCopy = { ...copy, sourceFile: { ...copy.sourceFile, content: "", truncated: true } };
+  if (JSON.stringify(copy, null, 2).length > maxChars) {
+    if (JSON.stringify(emptySourceCopy, null, 2).length <= maxChars) {
+      const fullContent = copy.sourceFile.content;
+      let lo = 0;
+      let hi = fullContent.length;
+      let best = 0;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const candidate = {
+          ...copy,
+          sourceFile: { ...copy.sourceFile, content: fullContent.slice(0, mid), truncated: mid < fullContent.length },
+        };
+        if (JSON.stringify(candidate, null, 2).length <= maxChars) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      copy.sourceFile.content = fullContent.slice(0, best);
+      copy.sourceFile.truncated = best < fullContent.length;
+    } else {
+      copy.sourceFile.content = "";
       copy.sourceFile.truncated = true;
     }
-  } else {
-    copy.sourceFile.content = "";
-    copy.sourceFile.truncated = true;
   }
 
   // 5. Enforce hard maxChars bound while keeping primary target
@@ -93,7 +105,12 @@ export function runLocalShow(opts: RunLocalShowOptions): FileContext {
     );
   }
 
-  if (!isSafeRealPathInsideRoot(entry.contextPath, prepareDir, { requireRegularFileIfExists: true })) {
+  if (
+    !isSafeRealPathInsideRoot(entry.contextPath, prepareDir, {
+      allowMissingLeaf: true,
+      requireRegularFileIfExists: true,
+    })
+  ) {
     throw new StageError(
       `Unsafe context path "${entry.contextPath}".`,
       EXIT_CODES.POLICY_OR_HASH,

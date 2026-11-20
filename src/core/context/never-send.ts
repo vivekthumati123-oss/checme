@@ -44,7 +44,7 @@ export function matchesNeverSendPath(repoRelPath: string, extraGlobs: readonly s
   const patterns = [...DEFAULT_NEVER_SEND_GLOBS, ...extraGlobs];
   const matcher = picomatch(patterns, {
     dot: true,
-    nocase: process.platform === "win32",
+    nocase: true,
   });
   return matcher(norm);
 }

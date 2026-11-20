@@ -16,16 +16,32 @@ rules:
         - src/**/__tests__/**
         - "**/*.test.js"
         - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/*.test.jsx"
+        - "**/*.test.mjs"
+        - "**/*.spec.js"
+        - "**/*.spec.jsx"
         - "**/*.spec.ts"
+        - "**/*.spec.tsx"
         - "**/test_*.py"
+        - "**/*_test.py"
         - "**/*Test.java"
+        - "**/*Tests.java"
+        - "**/*Tests.cs"
   - action: file.write
     effect: deny
     conditions:
       paths:
+        - .git/**
         - .github/**
+        - .vscode/**
+        - node_modules/**
         - infrastructure/**
         - "**/*.env"
+        - "**/.env"
+        - "**/.env.*"
+        - "**/*.pem"
+        - "**/*.key"
     reason: TestGen must never modify pipelines, infrastructure or secrets
   - action: commit.create
     effect: require-approval

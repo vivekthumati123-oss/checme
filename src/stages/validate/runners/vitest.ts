@@ -59,8 +59,15 @@ export async function runVitestSingleFile(req: RunnerRequest): Promise<RunnerOut
   if (runArgs.some((a) => /vitest/i.test(a)) || /vitest/i.test(file)) {
     if (!runArgs.includes("run")) runArgs.push("run");
     runArgs.push(relTestPath, "--reporter=json", `--outputFile=${jsonOut}`);
-    if (req.withCoverage && !runArgs.includes("--coverage")) {
-      runArgs.push("--coverage");
+    if (req.withCoverage) {
+      if (!runArgs.some((a) => a === "--coverage" || a.startsWith("--coverage."))) {
+        runArgs.push("--coverage.enabled=true");
+      }
+    } else if (
+      runArgs.some((a) => a === "--coverage" || a.startsWith("--coverage.")) &&
+      !runArgs.includes("--coverage.enabled=false")
+    ) {
+      runArgs.push("--coverage.enabled=false");
     }
   } else {
     runArgs.push(relTestPath);
@@ -79,7 +86,7 @@ export async function runVitestSingleFile(req: RunnerRequest): Promise<RunnerOut
     const tests = parseJsJsonReport(jsonOut);
     const outcome = buildBaseOutcome(execRes, tests);
     if (execRes.exitCode !== 0) {
-      const classified = classifyExecutionFailure(execRes);
+      const classified = classifyExecutionFailure(execRes, "javascript");
       outcome.failureReason = classified.reason;
       outcome.failureDetail = classified.detail;
     }

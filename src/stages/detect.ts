@@ -9,12 +9,16 @@ import {
   EXIT_CODES,
   FileContextSchema,
   ManifestSchema,
+  PlanOutputSchema,
+  SkipReasonSchema,
   StageError,
   type DiffSource,
   type LanguageKey,
   type LoggerLike,
   type Manifest,
   type ManifestFile,
+  type PlanOutput,
+  type SkipReason,
   type UnitAgentConfig,
 } from "../contracts";
 import {
@@ -46,6 +50,8 @@ export interface RunDetectOptions {
   workDir: string;
   configPath?: string;
   config?: UnitAgentConfig;
+  planPath?: string;
+  plan?: PlanOutput;
   diffSource: DiffSource;
   runId?: string;
   repoFullName?: string;
@@ -83,11 +89,13 @@ async function resolveChangedLinesFromSource(
   diffSource: DiffSource,
 ): Promise<{
   changedLinesByFile: Map<string, Set<number>>;
+  untrackedFiles: Set<string>;
   includeAllLines: boolean;
   baseSha: string;
   headSha: string;
 }> {
   const changedLinesByFile = new Map<string, Set<number>>();
+  const untrackedFiles = new Set<string>();
 
   if (diffSource.kind === "git-range") {
     const raw = await getDiffChangedRanges({
@@ -98,7 +106,13 @@ async function resolveChangedLinesFromSource(
     for (const [p, lines] of Object.entries(raw)) {
       changedLinesByFile.set(p, new Set(lines));
     }
-    return { changedLinesByFile, includeAllLines: false, baseSha: diffSource.base, headSha: diffSource.head };
+    return {
+      changedLinesByFile,
+      untrackedFiles,
+      includeAllLines: false,
+      baseSha: diffSource.base,
+      headSha: diffSource.head,
+    };
   }
 
   const headRes = await runCommand("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
@@ -115,7 +129,13 @@ async function resolveChangedLinesFromSource(
         changedLinesByFile.set(f, new Set());
       }
     }
-    return { changedLinesByFile, includeAllLines: true, baseSha: diffSource.baseRef ?? headSha, headSha };
+    return {
+      changedLinesByFile,
+      untrackedFiles,
+      includeAllLines: true,
+      baseSha: diffSource.baseRef ?? headSha,
+      headSha,
+    };
   }
 
   let gitArgs: string[];
@@ -159,17 +179,12 @@ async function resolveChangedLinesFromSource(
     const untracked = await listUntrackedRepoFiles(repoRoot);
     for (const rel of untracked) {
       if (changedLinesByFile.has(rel)) continue;
-      if (!isSafeRealPathInsideRoot(rel, repoRoot, { requireRegularFileIfExists: true })) continue;
-      const abs = path.join(repoRoot, rel);
-      if (!existsSync(abs)) continue;
-      const lineCount = readFileSync(abs, "utf8").split(/\r?\n/).length;
-      const lineSet = new Set<number>();
-      for (let ln = 1; ln <= lineCount; ln += 1) lineSet.add(ln);
-      changedLinesByFile.set(rel, lineSet);
+      changedLinesByFile.set(rel, new Set<number>());
+      untrackedFiles.add(rel);
     }
   }
 
-  return { changedLinesByFile, includeAllLines: false, baseSha: resolvedBaseRef ?? headSha, headSha };
+  return { changedLinesByFile, untrackedFiles, includeAllLines: false, baseSha: resolvedBaseRef ?? headSha, headSha };
 }
 
 function matchConfiguredLanguage(repoRelPath: string, config: UnitAgentConfig): LanguageKey | null {
@@ -191,6 +206,27 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
   const config = opts.config ?? loadConfig(opts.repoRoot, opts.configPath).config;
   const resolved = await resolveChangedLinesFromSource(opts.repoRoot, opts.diffSource);
 
+  // Load prepare/plan.json when available (or explicit --plan) so detect respects plan skips
+  let planOutput = opts.plan ?? null;
+  if (!planOutput && (opts.planPath || opts.diffSource.kind === "git-range")) {
+    const resolvedPlanPath = opts.planPath ?? path.join(opts.workDir, ARTIFACTS.prepare.dir, "plan.json");
+    if (existsSync(resolvedPlanPath)) {
+      planOutput = PlanOutputSchema.parse(JSON.parse(readFileSync(resolvedPlanPath, "utf8")));
+    }
+  }
+  const planSkippedByLang = new Map<string, { reason: SkipReason; detail: string }>();
+  if (planOutput) {
+    for (const item of planOutput.skipped) {
+      if (!planSkippedByLang.has(item.language)) {
+        const parsedReason = SkipReasonSchema.safeParse(item.reason);
+        planSkippedByLang.set(item.language, {
+          reason: parsedReason.success ? parsedReason.data : "unsupported_tool_version",
+          detail: item.found ? `${item.reason}: ${item.found}` : `Skipped by plan (${item.reason}).`,
+        });
+      }
+    }
+  }
+
   // Load baseline state if available
   let baselineArtifact = opts.baseline ?? null;
   if (!baselineArtifact) {
@@ -210,20 +246,26 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
     ? deserializeCoverageLineMap(baselineArtifact.lineHitsByFile)
     : new Map();
 
-  // Also attempt reading configured coverage files on disk when baseline wasn't explicitly skipped/provided
-  if (coverageMap.size === 0 && !opts.baseline) {
-    for (const lang of ["javascript", "python", "java"] as LanguageKey[]) {
-      const langCfg = config.languages[lang];
-      if (!langCfg || !langCfg.enabled) continue;
-      const cov = parseCoverageFile({
-        filePath: langCfg.coverageFile,
-        format: langCfg.coverageFormat,
-        repoRoot: opts.repoRoot,
-        workingDirectory: langCfg.workingDirectory,
-        knownSourceFiles,
-      });
-      if (cov) {
-        for (const [k, v] of cov.entries()) coverageMap.set(k, v);
+  // For any non-red language that still has changed files missing from coverageMap,
+  // re-parse its on-disk coverageFile with knownSourceFiles and merge missing entries.
+  for (const lang of ["javascript", "python", "java"] as LanguageKey[]) {
+    const langCfg = config.languages[lang];
+    if (!langCfg || !langCfg.enabled) continue;
+    if (baselineArtifact?.perLanguage[lang]?.status === "red") continue;
+    const hasMissingFiles = knownSourceFiles.some(
+      (p) => !excludeMatcher(p) && matchConfiguredLanguage(p, config) === lang && !coverageMap.has(p),
+    );
+    if (!hasMissingFiles) continue;
+    const cov = parseCoverageFile({
+      filePath: langCfg.coverageFile,
+      format: langCfg.coverageFormat,
+      repoRoot: opts.repoRoot,
+      workingDirectory: langCfg.workingDirectory,
+      knownSourceFiles,
+    });
+    if (cov) {
+      for (const [k, v] of cov.entries()) {
+        if (!coverageMap.has(k)) coverageMap.set(k, v);
       }
     }
   }
@@ -262,6 +304,12 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
 
     const language = matchConfiguredLanguage(repoRelPath, config);
     if (!language) continue;
+
+    const planSkip = planSkippedByLang.get(language);
+    if (planSkip) {
+      skipped.push({ path: repoRelPath, reason: planSkip.reason, detail: planSkip.detail });
+      continue;
+    }
 
     const fw = getFrameworkCheck(language);
     if (fw.unsupportedFramework) {
@@ -323,8 +371,14 @@ export async function runDetect(opts: RunDetectOptions): Promise<Manifest> {
 
     if (parsed.isTestFile || parsed.isGeneratedFile) continue;
 
+    const lineCount = content.split(/\r?\n/).length;
+    if (resolved.untrackedFiles.has(repoRelPath)) {
+      for (let ln = 1; ln <= lineCount; ln += 1) {
+        changedLineSet.add(ln);
+      }
+    }
     const effectiveChangedLines = resolved.includeAllLines
-      ? new Set<number>(Array.from({ length: content.split(/\r?\n/).length }, (_, i) => i + 1))
+      ? new Set<number>(Array.from({ length: lineCount }, (_, i) => i + 1))
       : changedLineSet;
 
     const lineCov = coverageMap.get(repoRelPath);

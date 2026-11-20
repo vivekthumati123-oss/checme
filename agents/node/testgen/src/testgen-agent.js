@@ -5,7 +5,7 @@ import { BaseAgent, automationTask, createAgentResult } from "@l2/agent-core";
 import { parseStructuredOutput } from "@l2/copilot-runtime";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".java", ".cs"]);
-const TEST_HINTS = [/\.test\./, /\.spec\./, /(^|\/)tests?\//, /(^|\/)test_[^/]+\.py$/, /Test\.java$/, /__tests__\//];
+const TEST_HINTS = [/\.test\./, /\.spec\./, /(^|\/)tests?\//, /(^|\/)test_[^/]+\.py$/, /_test\.py$/, /Tests?\.java$/, /Tests\.cs$/, /__tests__\//];
 export const COMMENT_MARKER = "<!-- l2:testgen -->";
 
 /** TestGen: L2 extension of the `unit-agent` custom agent. */
@@ -16,6 +16,10 @@ export class TestGenAgent extends BaseAgent {
   }
 
   async perform(request, context) {
+    const readDecision = context.policy.evaluate({ action: "repository.read" });
+    if (!readDecision.allowed || readDecision.requiresApproval) {
+      throw new Error(`Repository read denied by policy: ${readDecision.reason}`);
+    }
     const config = this.binding.resolveConfig(request.payload);
     const prNumber = request.payload.pullRequestNumber;
     const pullRequest = await context.scm.getPullRequest(prNumber);
@@ -66,17 +70,36 @@ export class TestGenAgent extends BaseAgent {
     const accepted = [];
     const rejected = [];
     for (const file of files) {
-      const p = path.posix.normalize(String(file.path ?? "").replace(/\\/g, "/"));
-      if (!p || p.startsWith("..") || path.isAbsolute(p)) {
+      if (!file || typeof file !== "object") {
+        rejected.push({ path: "<invalid>", reason: "invalid file entry" });
+        continue;
+      }
+      const rawPath = String(file.path ?? "").replace(/\\/g, "/");
+      if (
+        !rawPath ||
+        rawPath.includes("\0") ||
+        rawPath.endsWith("/") ||
+        /^(?:[a-zA-Z]:)?\//.test(rawPath) ||
+        path.win32.isAbsolute(rawPath)
+      ) {
+        rejected.push({ ...file, path: rawPath, reason: "unsafe path" });
+        continue;
+      }
+      const p = path.posix.normalize(rawPath);
+      if (!p || p === "." || p === ".." || p.startsWith("../") || path.isAbsolute(p)) {
         rejected.push({ ...file, path: p, reason: "unsafe path" });
         continue;
       }
+      if (typeof file.content !== "string") {
+        rejected.push({ ...file, path: p, reason: "invalid content" });
+        continue;
+      }
       const decision = context.policy.evaluate({ action: "file.write", attributes: { path: p } });
-      if (!decision.allowed) {
+      if (!decision.allowed || decision.requiresApproval) {
         rejected.push({ ...file, path: p, reason: `policy: ${decision.reason}` });
         continue;
       }
-      const hook = await context.hooks?.allowTool("create", { path: p, content: file.content ?? "" });
+      const hook = await context.hooks?.allowTool("create", { path: p, content: file.content });
       if (hook?.decision === "deny") {
         rejected.push({ ...file, path: p, reason: `hook: ${hook.reason}` });
         continue;
@@ -90,7 +113,7 @@ export class TestGenAgent extends BaseAgent {
     const warnings = [];
     if (request.dryRun) return warnings;
     if (accepted.length === 0 && rejected.length === 0) return warnings;
-    const outputMode = config.writeMode ?? config.outputMode ?? "comment";
+    const outputMode = config.writeMode?.trim() || config.outputMode?.trim() || "comment";
     if (outputMode === "commit" && accepted.length > 0) {
       const decision = context.policy.evaluate({ action: "commit.create" });
       if (decision.allowed && !decision.requiresApproval) {
@@ -106,13 +129,26 @@ export class TestGenAgent extends BaseAgent {
         }
       }
       await writeArtifactFiles(accepted, context.workspace);
+      for (const file of accepted) {
+        await context.hooks?.run("postToolUse", { toolName: "create", toolArgs: { path: file.path }, toolResult: { resultType: "success" } });
+      }
     }
-    await context.scm.upsertPullRequestComment(pullRequest.number, COMMENT_MARKER, renderComment(accepted, rejected, output));
-    try {
-      await context.scm.publishCheck({ name: "TestGen", headSha: pullRequest.headSha, conclusion: accepted.length > 0 ? "success" : "neutral", title: `${accepted.length} test file(s) generated`, summary: output.summary ?? "TestGen completed." });
-    } catch (error) {
-      context.logger.warn("testgen.check.skipped", { error: error.message });
-      warnings.push(`Check run not published (needs a GitHub App or Actions token): ${error.message.slice(0, 120)}`);
+    const commentDecision = context.policy.evaluate({ action: "pull-request.comment" });
+    if (commentDecision.allowed && !commentDecision.requiresApproval) {
+      await context.scm.upsertPullRequestComment(pullRequest.number, COMMENT_MARKER, renderComment(accepted, rejected, output));
+    } else {
+      warnings.push(`PR comment not posted: ${commentDecision.reason}`);
+    }
+    const checkDecision = context.policy.evaluate({ action: "check.publish" });
+    if (checkDecision.allowed && !checkDecision.requiresApproval) {
+      try {
+        await context.scm.publishCheck({ name: "TestGen", headSha: pullRequest.headSha, conclusion: accepted.length > 0 ? "success" : "neutral", title: `${accepted.length} test file(s) generated`, summary: sanitizeText(output.summary ?? "TestGen completed.", 500) });
+      } catch (error) {
+        context.logger.warn("testgen.check.skipped", { error: error.message });
+        warnings.push(`Check run not published (needs a GitHub App or Actions token): ${error.message.slice(0, 120)}`);
+      }
+    } else {
+      warnings.push(`Check run not published: ${checkDecision.reason}`);
     }
     return warnings;
   }
@@ -178,25 +214,52 @@ export async function writeArtifactFiles(accepted, workspace) {
 
 
 export function selectSourceFiles(changedFiles) {
-  return changedFiles.filter((f) => f.status !== "removed" && f.status !== "deleted" && SOURCE_EXTENSIONS.has(path.extname(f.path)) && !TEST_HINTS.some((p) => p.test(f.path)));
+  return changedFiles.filter(
+    (f) =>
+      f.status !== "removed" &&
+      f.status !== "deleted" &&
+      !f.path.endsWith(".d.ts") &&
+      SOURCE_EXTENSIONS.has(path.extname(f.path)) &&
+      !TEST_HINTS.some((p) => p.test(f.path)),
+  );
 }
 
 export function detectFramework(paths) {
   if (paths.some((p) => p.endsWith(".py"))) return "pytest";
   if (paths.some((p) => p.endsWith(".java"))) return "junit";
+  if (paths.some((p) => p.endsWith(".cs"))) return "xunit";
   return "jest";
 }
 
 export function expectedTestPath(sourcePath, framework) {
-  const dir = path.posix.dirname(sourcePath).replace(/^src\/?/, "");
+  const dir = path.posix.dirname(sourcePath).replace(/^(?:src\/main\/java|src)\/?/, "");
   const base = path.posix.basename(sourcePath, path.posix.extname(sourcePath));
   if (framework === "pytest") return path.posix.join("tests/unit", dir, `test_${base}.py`);
   if (framework === "junit") return path.posix.join("src/test/java", dir, `${base}Test.java`);
+  if (framework === "xunit") return path.posix.join("tests/unit", dir, `${base}Tests.cs`);
   return path.posix.join("tests/unit", dir, `${base}.test${path.posix.extname(sourcePath)}`);
 }
 
+function sanitizeText(value, maxLen = 500) {
+  return String(value ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/`/g, "'")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")")
+    .replace(/@/g, "@\u200b")
+    .trim()
+    .slice(0, maxLen);
+}
+
 function renderComment(accepted, rejected, output) {
-  const rows = accepted.map((f) => `| \`${f.sourcePath ?? "-"}\` | \`${f.path}\` | ${f.casesGenerated ?? "-"} |`).join("\n");
-  const blocked = rejected.length ? `\n<details><summary>${rejected.length} file(s) blocked by guardrails</summary>\n\n${rejected.map((r) => `- \`${r.path}\`: ${r.reason}`).join("\n")}\n</details>\n` : "";
-  return [COMMENT_MARKER, "### TestGen", "", output.summary ?? "Generated unit tests for this pull request.", "", accepted.length ? `| Source | Test file | Cases |\n| --- | --- | --- |\n${rows}` : "_No test files were accepted._", blocked, "_Generated by the `unit-agent` custom agent. Review before merging._"].join("\n");
+  const rows = accepted
+    .map((f) => `| \`${sanitizeText(f.sourcePath ?? "-", 200)}\` | \`${sanitizeText(f.path, 200)}\` | ${Number.isFinite(Number(f.casesGenerated)) ? Number(f.casesGenerated) : "-"} |`)
+    .join("\n");
+  const blocked = rejected.length
+    ? `\n<details><summary>${rejected.length} file(s) blocked by guardrails</summary>\n\n${rejected.map((r) => `- \`${sanitizeText(r.path, 200)}\`: ${sanitizeText(r.reason, 200)}`).join("\n")}\n</details>\n`
+    : "";
+  const summary = sanitizeText(output.summary ?? "Generated unit tests for this pull request.", 1000) || "Generated unit tests for this pull request.";
+  return [COMMENT_MARKER, "### TestGen", "", summary, "", accepted.length ? `| Source | Test file | Cases |\n| --- | --- | --- |\n${rows}` : "_No test files were accepted._", blocked, "_Generated by the `unit-agent` custom agent. Review before merging._"].join("\n");
 }

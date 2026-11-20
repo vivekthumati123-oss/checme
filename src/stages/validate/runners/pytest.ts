@@ -93,7 +93,11 @@ export async function runPytestSingleFile(req: RunnerRequest): Promise<RunnerOut
       if (!runArgs.some((a) => a === "--cov" || a.startsWith("--cov="))) {
         runArgs.push("--cov=.");
       }
-      if (!runArgs.some((a) => a === "--cov-report" || a.startsWith("--cov-report="))) {
+      const hasXmlCovReport = runArgs.some(
+        (a, idx) =>
+          a.startsWith("--cov-report=xml") || (a === "--cov-report" && Boolean(runArgs[idx + 1]?.startsWith("xml"))),
+      );
+      if (!hasXmlCovReport) {
         const relCovOut = fromRepoPath(req.languageConfig.coverageFile, req.languageConfig.workingDirectory);
         runArgs.push(`--cov-report=xml:${relCovOut}`);
       }
@@ -118,7 +122,7 @@ export async function runPytestSingleFile(req: RunnerRequest): Promise<RunnerOut
     const tests = parseJunitXmlReport(xmlOut);
     const outcome = buildBaseOutcome(execRes, tests);
     if (execRes.exitCode !== 0) {
-      const classified = classifyExecutionFailure(execRes);
+      const classified = classifyExecutionFailure(execRes, "python");
       outcome.failureReason = classified.reason;
       outcome.failureDetail = classified.detail;
     }

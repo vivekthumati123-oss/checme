@@ -30,6 +30,7 @@ export interface PolicyCheckOptions {
   content: string;
   importHint?: string;
   sourcePath?: string;
+  targetSymbolNames?: readonly string[];
   targetCount?: number;
   maxTestsPerSymbol?: number;
   extraBannedImports?: Record<string, string[]>;
@@ -47,7 +48,7 @@ const JS_BANNED_PROCESS_IMPORTS = new Set([
   "_linkedBinding",
   "mainModule",
 ]);
-const JS_TRACKED_GLOBAL_FUNCTIONS = new Set(["eval", "Function", "fetch", "XMLHttpRequest"]);
+const JS_TRACKED_GLOBAL_FUNCTIONS = new Set(["eval", "Function", "fetch", "XMLHttpRequest", "require"]);
 const PY_BANNED_OS_ATTRS = new Set([
   "environ",
   "environb",
@@ -87,7 +88,7 @@ const PY_BANNED_OS_ATTRS = new Set([
 ]);
 const PY_BANNED_BUILTIN_ATTRS = new Set(["eval", "exec", "__import__", "__dict__"]);
 const JAVA_STDLIB_PREFIX_RE =
-  /^(?:java\.lang|java\.nio\.file|java\.net\.http|java\.lang\.invoke|java\.nio\.channels)\./;
+  /^(?:java\.lang|java\.nio\.file|java\.net\.http|java\.lang\.invoke|java\.nio\.channels|javax\.net\.ssl|javax\.net)\./;
 
 function matchesBannedModule(specifier: string, bannedList: readonly string[]): boolean {
   const clean = specifier.replace(/^['"`]|['"`]$/g, "").trim();
@@ -333,6 +334,22 @@ function collectJsAliases(root: Parser.SyntaxNode): {
   const objectAliases = new Set(["Object"]);
   const callAliases = new Map<string, string>();
 
+  // Ignore locally shadowed `self` declarations (e.g. `const self = this` or parameter `(self)`) unless bound to global root.
+  for (const param of root.descendantsOfType(["required_parameter", "optional_parameter"])) {
+    const pat = param.childForFieldName("pattern");
+    const val = param.childForFieldName("value");
+    if (pat?.type === "identifier" && pat.text === "self" && !isJsGlobalRoot(val, globalAliases)) {
+      globalAliases.delete("self");
+    }
+  }
+  for (const decl of root.descendantsOfType("variable_declarator")) {
+    const nameNode = decl.childForFieldName("name");
+    const valNode = decl.childForFieldName("value");
+    if (nameNode?.type === "identifier" && nameNode.text === "self" && !isJsGlobalRoot(valNode, globalAliases)) {
+      globalAliases.delete("self");
+    }
+  }
+
   for (const imp of root.descendantsOfType("import_statement")) {
     const src = extractJsStringLiteral(imp.childForFieldName("source")) ?? "";
     if (!isJsProcessImport(src)) continue;
@@ -346,7 +363,8 @@ function collectJsAliases(root: Parser.SyntaxNode): {
         if (aliasId) processAliases.add(aliasId.text);
       } else if (ch.type === "named_imports") {
         for (const spec of ch.descendantsOfType("import_specifier")) {
-          const importedName = spec.childForFieldName("name")?.text ?? spec.namedChild(0)?.text ?? "";
+          const nameNode = spec.childForFieldName("name") ?? spec.namedChild(0);
+          const importedName = extractJsStringLiteral(nameNode) ?? nameNode?.text ?? "";
           const localName = spec.childForFieldName("alias")?.text ?? importedName;
           if (importedName === "default" && localName) {
             processAliases.add(localName);
@@ -462,10 +480,13 @@ function checkJsObjectPatternOnTarget(
       }
     }
     for (const prop of extractJsObjectPatternProps(pattern)) {
-      if (prop.propName === "env") {
+      if (prop.propName === "env" || prop.propName === null) {
         violations.push({
           rule: "banned_env_access",
-          message: 'Banned destructuring of "env" from process.',
+          message:
+            prop.propName === "env"
+              ? 'Banned destructuring of "env" from process.'
+              : "Banned computed destructuring on process.",
           line: prop.node.startPosition.row + 1,
         });
       }
@@ -521,7 +542,25 @@ function resolveJsCalleeName(
       cur.type === "member_expression"
         ? (cur.childForFieldName("property")?.text ?? null)
         : extractJsStringLiteral(cur.childForFieldName("index"));
+    if (propName === "call" || propName === "apply" || propName === "bind") {
+      if (obj) {
+        return resolveJsCalleeName(obj, globalAliases, processAliases, reflectAliases, objectAliases, callAliases);
+      }
+    }
     if (propName) {
+      if (propName === "require") {
+        const unwrappedObj = unwrapJsExpr(obj);
+        if (unwrappedObj?.type === "identifier" && unwrappedObj.text === "module") {
+          return "require";
+        }
+        if (
+          unwrappedObj?.type === "member_expression" &&
+          unwrapJsExpr(unwrappedObj.childForFieldName("object"))?.text === "require" &&
+          unwrappedObj.childForFieldName("property")?.text === "main"
+        ) {
+          return "require";
+        }
+      }
       if (isJsGlobalRoot(obj, globalAliases)) {
         return propName;
       }
@@ -539,11 +578,22 @@ function resolveJsCalleeName(
   return cur.text;
 }
 
+function isJsExpectCall(node: Parser.SyntaxNode | null | undefined): boolean {
+  if (node?.type !== "call_expression") return false;
+  const fn = node.childForFieldName("function");
+  if (fn?.text === "expect") return true;
+  if (fn?.type === "member_expression" && fn.childForFieldName("object")?.text === "expect") {
+    const prop = fn.childForFieldName("property")?.text;
+    return prop === "soft" || prop === "poll";
+  }
+  return false;
+}
+
 function isJsExpectChain(node: Parser.SyntaxNode | null | undefined): {
   isExpect: boolean;
   direct: boolean;
 } {
-  if (node?.type === "call_expression" && node.childForFieldName("function")?.text === "expect") {
+  if (isJsExpectCall(node)) {
     return { isExpect: true, direct: true };
   }
   let cur = node ?? null;
@@ -554,7 +604,7 @@ function isJsExpectChain(node: Parser.SyntaxNode | null | undefined): {
       break;
     }
     const obj = cur.childForFieldName("object");
-    if (obj?.type === "call_expression" && obj.childForFieldName("function")?.text === "expect") {
+    if (isJsExpectCall(obj)) {
       return { isExpect: true, direct: false };
     }
     cur = obj;
@@ -586,7 +636,8 @@ function checkJsPolicy(
     }
     if (isJsProcessImport(src)) {
       for (const spec of imp.descendantsOfType("import_specifier")) {
-        const importedName = spec.childForFieldName("name")?.text ?? spec.namedChild(0)?.text ?? "";
+        const nameNode = spec.childForFieldName("name") ?? spec.namedChild(0);
+        const importedName = extractJsStringLiteral(nameNode) ?? nameNode?.text ?? "";
         if (importedName === "env") {
           violations.push({
             rule: "banned_env_access",
@@ -675,12 +726,16 @@ function checkJsPolicy(
   }
 
   for (const sub of root.descendantsOfType("subscript_expression")) {
+    const obj = sub.childForFieldName("object");
     const key = extractJsStringLiteral(sub.childForFieldName("index"));
-    if (isJsProcessRef(sub.childForFieldName("object"), globalAliases, processAliases)) {
-      if (key === "env") {
+    if (isJsProcessRef(obj, globalAliases, processAliases)) {
+      if (key === "env" || key === null) {
         violations.push({
           rule: "banned_env_access",
-          message: 'Banned subscript access to `process["env"]`.',
+          message:
+            key === "env"
+              ? 'Banned subscript access to `process["env"]`.'
+              : "Banned computed subscript access on process.",
           line: sub.startPosition.row + 1,
         });
       } else if (key === "mainModule") {
@@ -690,6 +745,22 @@ function checkJsPolicy(
           line: sub.startPosition.row + 1,
         });
       }
+    } else if (isJsGlobalRoot(obj, globalAliases) && (key === "process" || key === null)) {
+      violations.push({
+        rule: "banned_env_access",
+        message: "Banned computed or process subscript access on global object.",
+        line: sub.startPosition.row + 1,
+      });
+    }
+  }
+
+  for (const spread of root.descendantsOfType("spread_element")) {
+    if (isJsProcessRef(spread.namedChild(0), globalAliases, processAliases)) {
+      violations.push({
+        rule: "banned_env_access",
+        message: "Banned spread `{ ...process }` exposes process.env.",
+        line: spread.startPosition.row + 1,
+      });
     }
   }
 
@@ -775,18 +846,37 @@ function checkJsPolicy(
       });
     }
 
-    if (
-      (calleeName === "Reflect.get" || calleeName === "Object.getOwnPropertyDescriptor") &&
-      isJsProcessRef(args?.namedChild(0), globalAliases, processAliases)
-    ) {
+    if (calleeName === "Reflect.get" || calleeName === "Object.getOwnPropertyDescriptor") {
+      const targetArg = args?.namedChild(0);
       const propKey = extractJsStringLiteral(args?.namedChild(1));
-      if (propKey === "env" || propKey === null) {
-        violations.push({
-          rule: "banned_env_access",
-          message: `Banned env lookup via "${calleeName}(process, ...)".`,
-          line: call.startPosition.row + 1,
-        });
+      if (isJsProcessRef(targetArg, globalAliases, processAliases)) {
+        if (propKey === "env" || propKey === null) {
+          violations.push({
+            rule: "banned_env_access",
+            message: `Banned env lookup via "${calleeName}(process, ...)".`,
+            line: call.startPosition.row + 1,
+          });
+        }
+      } else if (isJsGlobalRoot(targetArg, globalAliases)) {
+        if (propKey === "process" || propKey === null) {
+          violations.push({
+            rule: "banned_env_access",
+            message: `Banned process lookup via "${calleeName}(global, ...)".`,
+            line: call.startPosition.row + 1,
+          });
+        }
       }
+    }
+
+    if (
+      calleeName === "Object.assign" &&
+      (args?.namedChildren ?? []).some((arg) => isJsProcessRef(arg, globalAliases, processAliases))
+    ) {
+      violations.push({
+        rule: "banned_env_access",
+        message: 'Banned "Object.assign(..., process)" exposes process.env.',
+        line: call.startPosition.row + 1,
+      });
     }
 
     if (
@@ -805,7 +895,7 @@ function checkJsPolicy(
     }
 
     if (
-      /^(?:it|test|describe)(?:\.concurrent)?\.(?:only|skip)$/.test(fnText) ||
+      /^(?:it|test|describe)(?:\.(?:concurrent|sequential))?(?:\.(?:each|for))?\.(?:only|skip)$/.test(fnText) ||
       fnText === "fit" ||
       fnText === "fdescribe" ||
       fnText === "xit" ||
@@ -819,9 +909,11 @@ function checkJsPolicy(
     }
 
     if (
-      /^(?:it|test)(?:\.concurrent)?$/.test(fnText) ||
+      /^(?:it|test)(?:\.(?:concurrent|sequential))?$/.test(fnText) ||
       (fn.type === "call_expression" &&
-        /^(?:it|test)(?:\.concurrent)?\.each$/.test(fn.childForFieldName("function")?.text ?? ""))
+        /^(?:it|test)(?:\.(?:concurrent|sequential))?\.(?:each|for)$/.test(
+          fn.childForFieldName("function")?.text ?? "",
+        ))
     ) {
       testCount += 1;
     }
@@ -830,8 +922,12 @@ function checkJsPolicy(
       targetImport &&
       (fnText === "vi.mock" || fnText === "jest.mock" || fnText === "vi.doMock" || fnText === "jest.doMock")
     ) {
-      const arg0 = args?.namedChild(0)?.text.replace(/^['"]|['"]$/g, "") ?? "";
-      if (arg0 === targetImport || arg0.replace(/\.(js|ts)$/, "") === targetImport.replace(/\.(js|ts)$/, "")) {
+      const arg0 =
+        extractJsStringLiteral(args?.namedChild(0)) ?? args?.namedChild(0)?.text.replace(/^['"]|['"]$/g, "") ?? "";
+      if (
+        arg0 === targetImport ||
+        arg0.replace(/\.[cm]?[jt]sx?$/i, "") === targetImport.replace(/\.[cm]?[jt]sx?$/i, "")
+      ) {
         violations.push({
           rule: "mock_unit_under_test",
           message: `Cannot mock the unit under test ("${arg0}").`,
@@ -841,7 +937,9 @@ function checkJsPolicy(
     }
 
     // Check expect(...) assertions and tautologies like expect(true).toBe(true)
-    if (fn.type === "member_expression") {
+    if (fn.type === "identifier" && fn.text === "assert") {
+      assertionCount += 1;
+    } else if (fn.type === "member_expression") {
       const obj = fn.childForFieldName("object");
       const prop = fn.childForFieldName("property")?.text ?? "";
       const expectChain = isJsExpectChain(obj);
@@ -858,7 +956,7 @@ function checkJsPolicy(
             });
           }
         }
-      } else if (/^assert(?:$|.)/.test(fnText)) {
+      } else if (/^assert(?:\.|$)/.test(fnText)) {
         assertionCount += 1;
       }
     }
@@ -939,6 +1037,7 @@ function resolvePythonCallableName(
   builtinsAliases: ReadonlySet<string>,
   importlibAliases: ReadonlySet<string>,
   callAliases: ReadonlyMap<string, string>,
+  sysAliases: ReadonlySet<string> = new Set(["sys"]),
 ): string {
   const cur = unwrapPyExpr(fnNode);
   if (!cur) return "";
@@ -952,6 +1051,7 @@ function resolvePythonCallableName(
       if (osAliases.has(obj.text)) return `os.${prop}`;
       if (builtinsAliases.has(obj.text)) return prop;
       if (importlibAliases.has(obj.text)) return `importlib.${prop}`;
+      if (sysAliases.has(obj.text)) return `sys.${prop}`;
     }
   }
   if (cur.type === "subscript") {
@@ -986,6 +1086,8 @@ function checkPythonPolicy(
   const builtinsAliases = new Set(["builtins", "__builtins__"]);
   const importlibAliases = new Set(["importlib"]);
   const sysAliases = new Set(["sys"]);
+  const sysModulesAliases = new Set<string>();
+  const pytestAssertAliases = new Set<string>();
   const envAliases = new Set<string>();
   const callAliases = new Map<string, string>();
   let testCount = 0;
@@ -1053,6 +1155,22 @@ function checkPythonPolicy(
           line: imp.startPosition.row + 1,
         });
       }
+      if (mod === "builtins") {
+        if (bannedCalls.has(name) || PY_BANNED_BUILTIN_ATTRS.has(name)) {
+          violations.push({
+            rule: "banned_call",
+            message: `Banned Python builtins import "from builtins import ${name}".`,
+            line: imp.startPosition.row + 1,
+          });
+        }
+        callAliases.set(alias ?? name, name);
+      }
+      if (qualified === "sys.modules") {
+        sysModulesAliases.add(alias ?? name);
+      }
+      if (mod === "pytest" && (name === "raises" || name === "warns" || name === "fail")) {
+        pytestAssertAliases.add(alias ?? name);
+      }
       if (qualified === "os.environ" || qualified === "os.environb") {
         envAliases.add(alias ?? name);
       } else if (bannedCalls.has(qualified) || qualified === "getattr" || qualified === "builtins.getattr") {
@@ -1070,6 +1188,7 @@ function checkPythonPolicy(
       else if (builtinsAliases.has(rhs.text)) builtinsAliases.add(lhs.text);
       else if (importlibAliases.has(rhs.text)) importlibAliases.add(lhs.text);
       else if (sysAliases.has(rhs.text)) sysAliases.add(lhs.text);
+      else if (sysModulesAliases.has(rhs.text)) sysModulesAliases.add(lhs.text);
       else if (envAliases.has(rhs.text)) envAliases.add(lhs.text);
       else if (callAliases.has(rhs.text)) callAliases.set(lhs.text, callAliases.get(rhs.text)!);
       else if (bannedCalls.has(rhs.text) || rhs.text === "getattr" || rhs.text === "vars") {
@@ -1081,8 +1200,17 @@ function checkPythonPolicy(
       if (rObj?.type === "identifier") {
         if (osAliases.has(rObj.text) && (rAttr === "environ" || rAttr === "environb")) {
           envAliases.add(lhs.text);
+        } else if (sysAliases.has(rObj.text) && rAttr === "modules") {
+          sysModulesAliases.add(lhs.text);
         } else {
-          const resolved = resolvePythonCallableName(rhs, osAliases, builtinsAliases, importlibAliases, callAliases);
+          const resolved = resolvePythonCallableName(
+            rhs,
+            osAliases,
+            builtinsAliases,
+            importlibAliases,
+            callAliases,
+            sysAliases,
+          );
           if (bannedCalls.has(resolved) || resolved === "getattr" || resolved === "vars") {
             callAliases.set(lhs.text, resolved);
           }
@@ -1095,6 +1223,7 @@ function checkPythonPolicy(
         builtinsAliases,
         importlibAliases,
         callAliases,
+        sysAliases,
       );
       if (fnName === "getattr") {
         const gArgs = rhs.childForFieldName("arguments");
@@ -1151,6 +1280,15 @@ function checkPythonPolicy(
           message: `Banned Python builtins subscript "${val.text}[...]".`,
           line: sub.startPosition.row + 1,
         });
+      } else if (sysModulesAliases.has(val.text)) {
+        const modKey = extractPythonStringLiteral(sub.childForFieldName("subscript"));
+        if (modKey === null || modKey === "os" || modKey === "builtins" || matchesBannedModule(modKey, bannedModules)) {
+          violations.push({
+            rule: "banned_import",
+            message: `Banned Python sys.modules access "${sub.text}".`,
+            line: sub.startPosition.row + 1,
+          });
+        }
       }
     } else if (
       val?.type === "attribute" &&
@@ -1190,7 +1328,14 @@ function checkPythonPolicy(
   for (const call of root.descendantsOfType("call")) {
     const fnNode = unwrapPyExpr(call.childForFieldName("function"));
     const fnText = fnNode?.text ?? "";
-    const canonicalFn = resolvePythonCallableName(fnNode, osAliases, builtinsAliases, importlibAliases, callAliases);
+    const canonicalFn = resolvePythonCallableName(
+      fnNode,
+      osAliases,
+      builtinsAliases,
+      importlibAliases,
+      callAliases,
+      sysAliases,
+    );
 
     if (bannedCalls.has(canonicalFn)) {
       violations.push({
@@ -1201,6 +1346,39 @@ function checkPythonPolicy(
     }
 
     const args = call.childForFieldName("arguments");
+    if (fnNode?.type === "attribute") {
+      const mObj = unwrapPyExpr(fnNode.childForFieldName("object"));
+      const mProp = fnNode.childForFieldName("attribute")?.text ?? "";
+      const isSysModulesTarget =
+        (mObj?.type === "identifier" && sysModulesAliases.has(mObj.text)) ||
+        (mObj?.type === "attribute" &&
+          mObj.childForFieldName("object")?.type === "identifier" &&
+          sysAliases.has(mObj.childForFieldName("object")!.text) &&
+          mObj.childForFieldName("attribute")?.text === "modules");
+      if (isSysModulesTarget && (mProp === "get" || mProp === "pop" || mProp === "values")) {
+        if (mProp === "values") {
+          violations.push({
+            rule: "banned_import",
+            message: `Banned Python sys.modules.${mProp}() call.`,
+            line: call.startPosition.row + 1,
+          });
+        } else {
+          const modKey = extractPythonStringLiteral(args?.namedChild(0));
+          if (
+            modKey === null ||
+            modKey === "os" ||
+            modKey === "builtins" ||
+            matchesBannedModule(modKey, bannedModules)
+          ) {
+            violations.push({
+              rule: "banned_import",
+              message: `Banned Python sys.modules.${mProp}() access "${call.text}".`,
+              line: call.startPosition.row + 1,
+            });
+          }
+        }
+      }
+    }
     if (canonicalFn === "getattr") {
       const arg0 = unwrapPyExpr(args?.namedChild(0));
       const arg1 = extractPythonStringLiteral(args?.namedChild(1));
@@ -1245,7 +1423,14 @@ function checkPythonPolicy(
       }
     }
 
-    if (fnText === "pytest.raises") {
+    const fnTail = fnText.split(".").pop() ?? "";
+    if (
+      fnText === "pytest.raises" ||
+      fnText === "pytest.warns" ||
+      fnText === "pytest.fail" ||
+      pytestAssertAliases.has(fnText) ||
+      /^(?:assert_|assert[A-Z])/.test(fnTail)
+    ) {
       assertionCount += 1;
     }
     if (
@@ -1253,7 +1438,16 @@ function checkPythonPolicy(
       (fnText === "patch" || fnText === "mock.patch" || fnText === "unittest.mock.patch" || fnText === "mocker.patch")
     ) {
       const arg0 = extractPythonStringLiteral(args?.namedChild(0)) ?? "";
-      if (arg0 === targetMod || arg0.startsWith(`${targetMod}.`)) {
+      const isDirectUnitMock =
+        arg0 === targetMod ||
+        Boolean(
+          opts.targetSymbolNames &&
+          opts.targetSymbolNames.length > 0 &&
+          opts.targetSymbolNames.some(
+            (sym) => arg0 === `${targetMod}.${sym}` || arg0.startsWith(`${targetMod}.${sym}.`),
+          ),
+        );
+      if (isDirectUnitMock) {
         violations.push({
           rule: "mock_unit_under_test",
           message: `Cannot mock the unit under test ("${arg0}").`,
@@ -1291,10 +1485,8 @@ function checkPythonPolicy(
 function extractJavaCreationTypeName(expr: Parser.SyntaxNode): string {
   const typeNode = expr.childForFieldName("type");
   if (!typeNode) return "";
-  if (typeNode.type === "generic_type") {
-    return typeNode.namedChild(0)?.text ?? typeNode.text;
-  }
-  return typeNode.text;
+  const raw = typeNode.type === "generic_type" ? (typeNode.namedChild(0)?.text ?? typeNode.text) : typeNode.text;
+  return raw.replace(/\s+/g, "");
 }
 
 function checkJavaPolicy(
@@ -1307,10 +1499,12 @@ function checkJavaPolicy(
   const bannedConstructors = new Set(DEFAULT_BANNED_JAVA_CONSTRUCTORS);
   for (const mod of bannedModules) {
     if (mod.startsWith("org.junit.")) continue;
+    if (mod.endsWith(".*")) continue;
     bannedConstructors.add(mod);
     const dotIdx = mod.lastIndexOf(".");
-    if (dotIdx !== -1) {
-      bannedConstructors.add(mod.slice(dotIdx + 1));
+    const simple = dotIdx !== -1 ? mod.slice(dotIdx + 1) : mod;
+    if (simple !== "Process" && simple !== "Runtime") {
+      bannedConstructors.add(simple);
     }
   }
 
@@ -1318,7 +1512,7 @@ function checkJavaPolicy(
   const staticMethodAliases = new Map<string, string>();
   const expectedClass = path.posix.parse(opts.testPath).name;
   let testCount = 0;
-  let assertionCount = 0;
+  let assertionCount = root.descendantsOfType("assert_statement").length;
 
   const pkgHintMatch = /package\s+([A-Za-z0-9_.]+)\s*;/.exec(opts.importHint ?? "");
   if (pkgHintMatch?.[1]) {
@@ -1326,7 +1520,7 @@ function checkJavaPolicy(
     const actualPkg = pkgNode?.text
       .replace(/^package\s+/, "")
       .replace(/;$/, "")
-      .trim();
+      .replace(/\s+/g, "");
     if (actualPkg && actualPkg !== pkgHintMatch[1]) {
       violations.push({
         rule: "java_package_mismatch",
@@ -1362,7 +1556,7 @@ function checkJavaPolicy(
     const clean = imp.text
       .replace(/^import\s+(?:static\s+)?/, "")
       .replace(/;$/, "")
-      .trim();
+      .replace(/\s+/g, "");
     if (matchesBannedModule(clean, bannedModules)) {
       violations.push({
         rule: "banned_import",
@@ -1413,7 +1607,7 @@ function checkJavaPolicy(
   for (const ref of root.descendantsOfType("method_reference")) {
     const parts = ref.namedChildren;
     if (parts.length === 0) continue;
-    const lhs = parts[0]?.text ?? "";
+    const lhs = (parts[0]?.text ?? "").replace(/\s+/g, "");
     const normLhs = lhs.replace(JAVA_STDLIB_PREFIX_RE, "");
     if (ref.text.endsWith("::new")) {
       if (bannedConstructors.has(lhs) || bannedConstructors.has(normLhs)) {
@@ -1424,7 +1618,7 @@ function checkJavaPolicy(
         });
       }
     } else if (parts.length >= 2) {
-      const rhs = parts[parts.length - 1]?.text ?? "";
+      const rhs = (parts[parts.length - 1]?.text ?? "").replace(/\s+/g, "");
       const target = `${normLhs}.${rhs}`;
       if (bannedCalls.has(target)) {
         violations.push({
@@ -1437,7 +1631,7 @@ function checkJavaPolicy(
   }
 
   for (const ann of root.descendantsOfType(["marker_annotation", "annotation"])) {
-    const name = ann.childForFieldName("name")?.text ?? "";
+    const name = (ann.childForFieldName("name")?.text ?? "").replace(/\s+/g, "");
     if (/^(?:.*?\.)?(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)$/.test(name)) {
       testCount += 1;
     }
@@ -1451,12 +1645,18 @@ function checkJavaPolicy(
   }
 
   for (const inv of root.descendantsOfType("method_invocation")) {
-    const obj = inv.childForFieldName("object")?.text;
-    const name = inv.childForFieldName("name")?.text ?? "";
+    const obj = inv.childForFieldName("object")?.text.replace(/\s+/g, "");
+    const name = (inv.childForFieldName("name")?.text ?? "").replace(/\s+/g, "");
     const fullName = obj ? `${obj}.${name}` : name;
     const normalizedName = fullName.replace(JAVA_STDLIB_PREFIX_RE, "");
 
-    if (bannedCalls.has(fullName) || bannedCalls.has(normalizedName)) {
+    if (
+      bannedCalls.has(fullName) ||
+      bannedCalls.has(normalizedName) ||
+      name === "openConnection" ||
+      name === "openStream" ||
+      name === "toURL"
+    ) {
       violations.push({
         rule: "banned_call",
         message: `Banned Java call "${fullName}()".`,
@@ -1483,7 +1683,14 @@ function checkJavaPolicy(
       }
     }
 
-    if (/^(?:Assertions\.)?assert/.test(fullName) || name.startsWith("assert")) {
+    if (
+      /^(?:Assertions\.)?assert/.test(fullName) ||
+      name.startsWith("assert") ||
+      name === "verify" ||
+      name === "verifyNoInteractions" ||
+      name === "verifyNoMoreInteractions" ||
+      name === "fail"
+    ) {
       assertionCount += 1;
       const args = inv.childForFieldName("arguments");
       if (name === "assertTrue" && args?.namedChildCount === 1 && args.namedChild(0)?.text === "true") {

@@ -15,7 +15,7 @@ import {
 } from "../contracts";
 import { detectFrameworkForLanguage } from "../core/context";
 import { getDiffChangedRanges, resolveDiffRange, type PullRequestEventLike } from "../core/git";
-import { detectLanguageFromPath } from "../core/parse";
+import { detectLanguageFromPath, isTestFilePath } from "../core/parse";
 import { cleanRepoRelative, normalizeSlashes } from "../core/paths";
 import { buildLanguageToolVersions, resolveJavaBuildTool, resolveToolchainForLanguage } from "../languages/toolchains";
 import { writeGitHubOutput, writeStageStatus } from "../telemetry";
@@ -43,7 +43,9 @@ export function matchLanguageSourceFiles(
       nocase: process.platform === "win32",
     });
 
-    const matched = changedPaths.filter((p) => detectLanguageFromPath(p) === lang && !excludeMatcher(p) && matcher(p));
+    const matched = changedPaths.filter(
+      (p) => detectLanguageFromPath(p) === lang && !excludeMatcher(p) && !isTestFilePath(p) && matcher(p),
+    );
     if (matched.length > 0) {
       result.set(lang, matched);
     }

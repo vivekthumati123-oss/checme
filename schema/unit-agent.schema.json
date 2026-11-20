@@ -21,6 +21,7 @@
       "minLength": 1
     },
     "limits": {
+      "default": {},
       "type": "object",
       "properties": {
         "maxSymbolsPerPr": {
@@ -84,21 +85,10 @@
           "maximum": 60
         }
       },
-      "required": [
-        "maxSymbolsPerPr",
-        "maxFilesPerPr",
-        "maxTestsPerSymbol",
-        "maxContextChars",
-        "minExecutableLines",
-        "runTimeoutMinutes",
-        "repairAttempts",
-        "flakeRuns",
-        "perRunTestTimeoutSeconds",
-        "maxRequestsPerRun"
-      ],
       "additionalProperties": false
     },
     "baseline": {
+      "default": {},
       "type": "object",
       "properties": {
         "mode": {
@@ -116,13 +106,10 @@
           "maximum": 60
         }
       },
-      "required": [
-        "mode",
-        "timeoutMinutes"
-      ],
       "additionalProperties": false
     },
     "targets": {
+      "default": {},
       "type": "object",
       "properties": {
         "patchCoverage": {
@@ -138,13 +125,10 @@
           "maximum": 100
         }
       },
-      "required": [
-        "patchCoverage",
-        "symbolCoverageThreshold"
-      ],
       "additionalProperties": false
     },
     "policy": {
+      "default": {},
       "type": "object",
       "properties": {
         "extraBannedImports": {
@@ -169,14 +153,10 @@
           "type": "boolean"
         }
       },
-      "required": [
-        "extraBannedImports",
-        "dropZeroGainFiles",
-        "provenanceHeader"
-      ],
       "additionalProperties": false
     },
     "validate": {
+      "default": {},
       "type": "object",
       "properties": {
         "workspace": {
@@ -194,13 +174,10 @@
           "maximum": 5000
         }
       },
-      "required": [
-        "workspace",
-        "maxCopyMB"
-      ],
       "additionalProperties": false
     },
     "env": {
+      "default": {},
       "type": "object",
       "properties": {
         "pass": {
@@ -215,13 +192,10 @@
           "type": "boolean"
         }
       },
-      "required": [
-        "pass",
-        "passProxy"
-      ],
       "additionalProperties": false
     },
     "files": {
+      "default": {},
       "type": "object",
       "properties": {
         "eol": {
@@ -234,12 +208,10 @@
           ]
         }
       },
-      "required": [
-        "eol"
-      ],
       "additionalProperties": false
     },
     "privacy": {
+      "default": {},
       "type": "object",
       "properties": {
         "neverSend": {
@@ -251,12 +223,10 @@
           }
         }
       },
-      "required": [
-        "neverSend"
-      ],
       "additionalProperties": false
     },
     "offline": {
+      "default": {},
       "type": "object",
       "properties": {
         "strategy": {
@@ -268,12 +238,10 @@
           ]
         }
       },
-      "required": [
-        "strategy"
-      ],
       "additionalProperties": false
     },
     "commit": {
+      "default": {},
       "type": "object",
       "properties": {
         "auth": {
@@ -285,12 +253,10 @@
           ]
         }
       },
-      "required": [
-        "auth"
-      ],
       "additionalProperties": false
     },
     "local": {
+      "default": {},
       "type": "object",
       "properties": {
         "baseRef": {
@@ -340,15 +306,6 @@
           }
         }
       },
-      "required": [
-        "stagingDir",
-        "maxRepairIterations",
-        "reuseCoverage",
-        "confirmBeforeRun",
-        "stageApplied",
-        "nodeCommand",
-        "chatTools"
-      ],
       "additionalProperties": false
     },
     "languages": {
@@ -422,7 +379,8 @@
             "generatedSuffix": {
               "default": ".unit-agent",
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$"
             },
             "formatCommand": {
               "type": "string"
@@ -432,15 +390,11 @@
             }
           },
           "required": [
-            "enabled",
-            "framework",
-            "workingDirectory",
             "testCommand",
             "coverageFile",
             "coverageFormat",
             "sourceGlobs",
-            "testPathPatterns",
-            "generatedSuffix"
+            "testPathPatterns"
           ],
           "additionalProperties": false
         },
@@ -512,7 +466,8 @@
             "generatedSuffix": {
               "default": ".unit-agent",
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$"
             },
             "formatCommand": {
               "type": "string"
@@ -529,15 +484,11 @@
             }
           },
           "required": [
-            "enabled",
-            "framework",
-            "workingDirectory",
             "testCommand",
             "coverageFile",
             "coverageFormat",
             "sourceGlobs",
-            "testPathPatterns",
-            "generatedSuffix"
+            "testPathPatterns"
           ],
           "additionalProperties": false
         },
@@ -609,7 +560,8 @@
             "generatedSuffix": {
               "default": ".unit-agent",
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$"
             },
             "formatCommand": {
               "type": "string"
@@ -655,6 +607,7 @@
               "minLength": 1
             },
             "coverage": {
+              "default": {},
               "type": "object",
               "properties": {
                 "mode": {
@@ -672,27 +625,15 @@
                   "minLength": 1
                 }
               },
-              "required": [
-                "mode"
-              ],
               "additionalProperties": false
             }
           },
           "required": [
-            "enabled",
-            "framework",
-            "workingDirectory",
             "testCommand",
             "coverageFile",
             "coverageFormat",
             "sourceGlobs",
-            "testPathPatterns",
-            "generatedSuffix",
-            "buildTool",
-            "toolPreference",
-            "strictWrapper",
-            "distribution",
-            "coverage"
+            "testPathPatterns"
           ],
           "additionalProperties": false
         }
@@ -716,20 +657,7 @@
   },
   "required": [
     "version",
-    "mode",
-    "limits",
-    "baseline",
-    "targets",
-    "policy",
-    "validate",
-    "env",
-    "files",
-    "privacy",
-    "offline",
-    "commit",
-    "local",
-    "languages",
-    "exclude"
+    "languages"
   ],
   "additionalProperties": false
 }

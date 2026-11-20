@@ -25,6 +25,7 @@ import { resolveGitHubTokensFromEnv } from "../../src/github";
 import { FakeLlmClient } from "../../src/llm/fake-client";
 import { runLocalApply } from "../../src/local/apply";
 import { cleanupLeftoverPlacedFiles, recordPlacedFile } from "../../src/local/placement";
+import { runLocalValidate } from "../../src/local/validate";
 import { runCommit } from "../../src/stages/commit";
 import { runGenerate } from "../../src/stages/generate";
 import { runPublish } from "../../src/stages/publish";
@@ -1162,5 +1163,56 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
     expect(applyRes.exitCode).toBe(EXIT_CODES.POLICY_OR_HASH);
     expect(applyRes.summary.refused[0]?.reason).toBe("policy");
     expect(existsSync(path.join(outsideDir, "a.test.ts"))).toBe(false);
+  });
+
+  it("11b. strips proxy credentials from GRADLE_OPTS/MAVEN_OPTS and rejects escaping local.stagingDir", async () => {
+    const cleanEnv = buildChildEnv(
+      undefined,
+      {},
+      {
+        GRADLE_OPTS: "-Dhttp.proxyUser=alice -Dhttps.proxyPassword=secret-pass -Xmx1g",
+        MAVEN_OPTS: "-Dhttps.proxyPassword=top-secret -Dfoo=bar",
+      },
+    );
+    expect(cleanEnv.GRADLE_OPTS).not.toContain("secret-pass");
+    expect(cleanEnv.GRADLE_OPTS).toContain("-Xmx1g");
+    expect(cleanEnv.MAVEN_OPTS).not.toContain("top-secret");
+    expect(cleanEnv.MAVEN_OPTS).toContain("-Dfoo=bar");
+
+    const repo = mkdtempSync(path.join(os.tmpdir(), "ua-sec-staging-"));
+    tempDirs.push(repo);
+    const workDir = path.join(repo, ".unit-agent");
+    mkdirSync(workDir, { recursive: true });
+    expect(() =>
+      ConfigSchema.parse({
+        version: 1,
+        local: { stagingDir: "../outside-staging" },
+        languages: {
+          javascript: {
+            enabled: true,
+            testCommand: "npx vitest run",
+            coverageFile: "coverage/lcov.info",
+            coverageFormat: "lcov",
+            sourceGlobs: ["src/**/*.ts"],
+            testPathPatterns: ["test/{name}.test.ts"],
+          },
+        },
+      }),
+    ).toThrow();
+    const cfg = ConfigSchema.parse({
+      version: 1,
+      languages: {
+        javascript: {
+          enabled: true,
+          testCommand: "npx vitest run",
+          coverageFile: "coverage/lcov.info",
+          coverageFormat: "lcov",
+          sourceGlobs: ["src/**/*.ts"],
+          testPathPatterns: ["test/{name}.test.ts"],
+        },
+      },
+    });
+    cfg.local.stagingDir = "../outside-staging";
+    await expect(runLocalValidate({ repoRoot: repo, workDir, config: cfg })).rejects.toThrow(StageError);
   });
 });

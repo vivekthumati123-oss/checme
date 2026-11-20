@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import type { LanguageKey, UnitAgentConfig } from "../contracts";
-import { parseArgvTokens, tokenizeCommand } from "./argv";
+import { tokenizeCommand } from "./argv";
 import { loadConfig } from "./loader";
 import { renderTestPathPattern } from "./templates";
 
@@ -89,7 +89,7 @@ export function runConfigCheck(repoRoot: string, explicitPath?: string): ConfigC
         if (needsFiles) {
           tokenizeCommand(cmd, ["sample.txt"]);
         } else {
-          parseArgvTokens(cmd);
+          tokenizeCommand(cmd);
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

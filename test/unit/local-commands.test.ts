@@ -739,4 +739,40 @@ describe("calc", () => {
     ).toBe(true);
     expect(sha256Hex("ok")).toHaveLength(64);
   });
+
+  it("preserves comma-brace inside JSONC strings in init-chat and enforces maxChars with heavy JSON escaping in local show", async () => {
+    const repo = createFakeVitestRepo();
+    const workDir = path.join(repo, ".unit-agent");
+    mkdirSync(path.join(repo, ".vscode"), { recursive: true });
+    writeFileSync(
+      path.join(repo, ".vscode", "tasks.json"),
+      '{\n  "version": "2.0.0",\n  "tasks": [\n    { "label": "custom: keep", "command": "echo , }" },\n  ],\n}\n',
+      "utf8",
+    );
+    await runInitChat({ repoRoot: repo, workDir, withTasks: true });
+    const mergedTasks = JSON.parse(readFileSync(path.join(repo, ".vscode", "tasks.json"), "utf8")) as {
+      tasks: Array<{ label: string; command?: string; args?: string[] }>;
+    };
+    const customTask = mergedTasks.tasks.find((t) => t.label === "custom: keep");
+    expect(customTask?.command).toBe("echo , }");
+    const uaTask = mergedTasks.tasks.find((t) => t.label === "unit-agent: status");
+    expect(Array.isArray(uaTask?.args)).toBe(true);
+
+    const detectRes = await runLocalDetect({
+      repoRoot: repo,
+      workDir,
+      scope: "files",
+      files: ["src/calc.js"],
+      skipBaseline: true,
+    });
+    const fileId = detectRes.summary.files[0]!.fileId;
+    const ctxPath = path.join(workDir, "prepare", "contexts", `${fileId}.json`);
+    const rawCtx = JSON.parse(readFileSync(ctxPath, "utf8")) as { sourceFile: { content: string } };
+    rawCtx.sourceFile.content = '"quote"\n'.repeat(200);
+    writeFileSync(ctxPath, JSON.stringify(rawCtx, null, 2), "utf8");
+
+    const trimmed = runLocalShow({ workDir, fileId, maxChars: 900 });
+    expect(JSON.stringify(trimmed, null, 2).length).toBeLessThanOrEqual(900);
+    expect(trimmed.sourceFile.truncated).toBe(true);
+  });
 });

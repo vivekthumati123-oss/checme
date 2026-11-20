@@ -8,6 +8,7 @@ export interface FailurePromptDetail {
   reason: string;
   message: string;
   excerpt: string;
+  failingTests?: readonly string[];
 }
 
 function resolvePromptPath(fileName: string): string {
@@ -66,16 +67,20 @@ export function wrapUntrustedCode(label: string, content: string): string {
   return `<UNTRUSTED_CODE label="${safeLabel}">\n${sanitized}\n</UNTRUSTED_CODE>`;
 }
 
+function formatTargetLines(targets: FileContext["targets"]): string[] {
+  return targets.map(
+    (t) =>
+      `- symbolId: \`${sanitizeInlinePromptText(t.symbolId)}\` | ${sanitizeInlinePromptText(t.qualifiedName)} (lines ${t.startLine}-${t.endLine}): \`${sanitizeInlinePromptText(t.signature)}\``,
+  );
+}
+
 export function renderGenerationPrompt(params: {
   context: FileContext;
   maxTestsPerSymbol: number;
   javaTestClassName?: string;
 }): string {
   const { context } = params;
-  const targetLines = context.targets.map(
-    (t) =>
-      `- symbolId: \`${sanitizeInlinePromptText(t.symbolId)}\` | ${sanitizeInlinePromptText(t.qualifiedName)} (lines ${t.startLine}-${t.endLine}): \`${sanitizeInlinePromptText(t.signature)}\``,
-  );
+  const targetLines = formatTargetLines(context.targets);
 
   const sourcePathSafe = sanitizeInlinePromptText(context.sourceFile.path);
   const testPathSafe = sanitizeInlinePromptText(context.conventions.testPath);
@@ -136,14 +141,38 @@ export function renderRepairPrompt(params: {
   context: FileContext;
   currentTestContent: string;
   failure: FailurePromptDetail;
+  javaTestClassName?: string;
 }): string {
   const repairHeader = loadPromptTemplate("repair.md").trim();
+  const targetLines = formatTargetLines(params.context.targets);
+  const fwVerSafe = params.context.frameworkVersion ? sanitizeInlinePromptText(params.context.frameworkVersion) : null;
   const sections = [
     repairHeader,
     "",
     `- testPath: \`${sanitizeInlinePromptText(params.context.conventions.testPath)}\``,
+    `- framework: \`${params.context.framework}\`${fwVerSafe ? ` (${fwVerSafe})` : ""}`,
     `- importHint: \`${sanitizeInlinePromptText(params.context.conventions.importHint)}\``,
+    `- mockingLibs: ${params.context.mockingLibs.length > 0 ? params.context.mockingLibs.map(sanitizeInlinePromptText).join(", ") : "none (prefer pure inputs/constructors)"}`,
     `- failureReason: \`${sanitizeInlinePromptText(params.failure.reason)}\``,
+  ];
+
+  if (params.javaTestClassName) {
+    sections.push(`- required Java public test class name: \`${sanitizeInlinePromptText(params.javaTestClassName)}\``);
+  }
+
+  if (targetLines.length > 0) {
+    sections.push("", "### Target Symbols", ...targetLines);
+  }
+
+  if (params.failure.failingTests && params.failure.failingTests.length > 0) {
+    sections.push(
+      "",
+      "### Failing Tests",
+      ...params.failure.failingTests.map((name) => `- \`${sanitizeInlinePromptText(name)}\``),
+    );
+  }
+
+  sections.push(
     "",
     "### Failure Message",
     wrapUntrustedCode("failure-message", params.failure.message),
@@ -156,7 +185,7 @@ export function renderRepairPrompt(params: {
     "",
     `### Target Source (${sanitizeInlinePromptText(params.context.sourceFile.path)})`,
     wrapUntrustedCode(params.context.sourceFile.path, params.context.sourceFile.content),
-  ];
+  );
 
   return sections.join("\n");
 }

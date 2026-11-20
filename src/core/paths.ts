@@ -19,6 +19,16 @@ function isSameOrSubpath(target: string, root: string): boolean {
 }
 
 function stripRootPrefix(absPath: string, rootPath: string): string | null {
+  const direct = stripRootPrefixOnce(absPath, rootPath);
+  if (direct !== null) return direct;
+  try {
+    return stripRootPrefixOnce(absPath, realpathSync(rootPath));
+  } catch {
+    return null;
+  }
+}
+
+function stripRootPrefixOnce(absPath: string, rootPath: string): string | null {
   const normAbs = normalizeSlashes(absPath);
   const normRoot = normalizeSlashes(path.resolve(rootPath)).replace(/\/+$/, "");
   if (process.platform === "win32") {

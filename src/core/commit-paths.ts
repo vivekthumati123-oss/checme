@@ -46,9 +46,14 @@ const DENY_BASENAMES = new Set([
   "jest.config.ts",
   "jest.config.mjs",
   "jest.config.cjs",
+  "jest.config.mts",
+  "jest.config.cts",
   "vitest.config.ts",
   "vitest.config.js",
   "vitest.config.mjs",
+  "vitest.config.cjs",
+  "vitest.config.mts",
+  "vitest.config.cts",
 ]);
 
 const ALLOWED_EXT = /\.(?:[cm]?[jt]sx?|py|java)$/i;
@@ -60,6 +65,8 @@ export function checkCommitPath(rawPath: string): CommitPathVerdict {
   if (
     !rawPath ||
     rawPath.includes("\0") ||
+    // eslint-disable-next-line no-control-regex
+    /[\x00-\x1f\x7f]/.test(rawPath) ||
     rawPath.includes("\\") ||
     rawPath.startsWith("/") ||
     /^[a-zA-Z]:/.test(rawPath)

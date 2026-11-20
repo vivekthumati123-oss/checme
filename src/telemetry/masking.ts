@@ -1,14 +1,17 @@
 import { collectSensitiveEnvValues } from "./sanitize";
 
 export function maskSecret(value: string | undefined, stdout: NodeJS.WriteStream = process.stdout): void {
-  if (!value || value.length === 0) return;
+  if (!value || value.trim().length === 0) return;
   if (process.env.GITHUB_ACTIONS === "true") {
-    for (const rawLine of value.split(/\r?\n/)) {
+    const lines = value.split(/\r\n|\r|\n/);
+    const isMultiline = lines.length > 1;
+    for (const rawLine of lines) {
+      if (!rawLine || rawLine.trim().length === 0) continue;
       const variants = new Set([rawLine, rawLine.trim()]);
       for (const v of variants) {
-        if (v.length >= 6) {
+        if (v.trim().length >= 6) {
           stdout.write(`::add-mask::${v}\n`);
-        } else if (v.length > 0 && rawLine === v) {
+        } else if (!isMultiline && v.length > 0 && rawLine === v) {
           stdout.write(`::add-mask::${v}\n`);
         }
       }

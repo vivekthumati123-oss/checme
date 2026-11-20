@@ -33,7 +33,9 @@ function resolveCoverageRecordPath(
   if (!normRaw || normRaw.includes("\0") || normRaw.split("/").includes("..")) {
     return null;
   }
-  const normalizedKnown = opts.knownSourceFiles?.map((k) => cleanRepoRelative(normalizeSlashes(k))) ?? [];
+  const normalizedKnown = (opts.knownSourceFiles?.map((k) => cleanRepoRelative(normalizeSlashes(k))) ?? []).sort(
+    (a, b) => b.length - a.length,
+  );
   const isRawAbs = path.posix.isAbsolute(normRaw) || /^[A-Za-z]:(?:\/|$)/.test(normRaw);
 
   if (opts.format === "jacoco") {
@@ -105,15 +107,35 @@ function resolveCoverageRecordPath(
     }
   }
 
+  const wd = opts.workingDirectory ? cleanRepoRelative(opts.workingDirectory) : "";
+  if (!isRawAbs) {
+    const cleanRaw = cleanRepoRelative(normRaw);
+    if (normalizedKnown.includes(cleanRaw)) {
+      return cleanRaw;
+    }
+    if (wd && wd !== ".") {
+      const wdCandidate = cleanRepoRelative(`${wd}/${cleanRaw}`);
+      if (normalizedKnown.includes(wdCandidate)) {
+        return wdCandidate;
+      }
+    }
+  }
+
   // First try direct repo normalization
   try {
     const repoRel = toRepoPath(normRaw, opts.repoRoot, {
       copyRoot: opts.copyRoot,
       workingDirectory: opts.workingDirectory,
     });
-    if (normalizedKnown.length > 0 && !normalizedKnown.includes(repoRel)) {
-      const suffixMatch = normalizedKnown.find((k) => k === repoRel || k.endsWith(`/${repoRel}`));
-      if (suffixMatch) return suffixMatch;
+    if (
+      normalizedKnown.length > 0 &&
+      !normalizedKnown.includes(repoRel) &&
+      !existsSync(path.resolve(opts.repoRoot, repoRel))
+    ) {
+      const suffixMatches = normalizedKnown.filter((k) => k === repoRel || k.endsWith(`/${repoRel}`));
+      if (suffixMatches.length === 1 && suffixMatches[0]) {
+        return suffixMatches[0];
+      }
     }
     return repoRel;
   } catch {
@@ -127,7 +149,6 @@ function resolveCoverageRecordPath(
   }
 
   // Fallback for workingDirectory + rawFilePath when raw path carried an unmapped absolute root
-  const wd = opts.workingDirectory ? cleanRepoRelative(opts.workingDirectory) : "";
   if (wd && wd !== "." && !isRawAbs) {
     try {
       const joined = toRepoPath(`${wd}/${normRaw}`, opts.repoRoot, {

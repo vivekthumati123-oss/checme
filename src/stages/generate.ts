@@ -20,7 +20,7 @@ import { sha256Hex } from "../core/context";
 import { isSafeRealPathInsideRoot } from "../core/paths";
 import { formatGeneratedTestContent } from "../core/text/eol";
 import { CopilotSdkTestClient, FakeLlmClient, type LlmTestClient } from "../llm";
-import { writeGitHubOutput, writeStageStatus } from "../telemetry";
+import { sanitizeOutput, writeGitHubOutput, writeStageStatus } from "../telemetry";
 import { loadPrepareConfig, loadManifest } from "./detect";
 
 export interface RunGenerateOptions {
@@ -35,6 +35,14 @@ export interface RunGenerateOptions {
   dryRun?: boolean;
   logger?: LoggerLike;
   writeOutputs?: boolean;
+}
+
+function getErrorRequestsUsed(err: unknown): number {
+  const raw =
+    err && typeof err === "object" && "requestsUsed" in err
+      ? (err as { requestsUsed?: unknown }).requestsUsed
+      : undefined;
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 1;
 }
 
 export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
@@ -116,6 +124,7 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
         maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
         javaTestClassName: mf.testClassName,
         attempt: 1,
+        maxRequestsRemaining: Math.max(1, maxRequests - requestsUsed),
       });
       requestsUsed += attemptRes.requestsUsed;
       fileRequests += attemptRes.requestsUsed;
@@ -124,8 +133,9 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
       if (err instanceof AuthError) {
         throw err;
       }
-      requestsUsed += 1;
-      fileRequests += 1;
+      const errRequests = getErrorRequestsUsed(err);
+      requestsUsed += errRequests;
+      fileRequests += errRequests;
       const isTruncated = err instanceof TruncatedOutputError;
       const isZod = err instanceof Error && err.name === "ZodError";
       // F9: Retry once on output truncation or schema validation error with reduced symbol count (ceil(N/2))
@@ -147,6 +157,7 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
             maxTestsPerSymbol: config.limits.maxTestsPerSymbol,
             javaTestClassName: mf.testClassName,
             attempt: 2,
+            maxRequestsRemaining: Math.max(1, maxRequests - requestsUsed),
           });
           requestsUsed += retryRes.requestsUsed;
           fileRequests += retryRes.requestsUsed;
@@ -155,67 +166,54 @@ export async function runGenerate(opts: RunGenerateOptions): Promise<Proposed> {
           if (retryErr instanceof AuthError) {
             throw retryErr;
           }
-          requestsUsed += 1;
-          fileRequests += 1;
-          if (retryErr instanceof TruncatedOutputError || (retryErr instanceof Error && retryErr.name === "ZodError")) {
-            proposedFiles.push({
-              fileId: mf.fileId,
-              testPath: mf.testPath,
-              content: "",
-              sha256: "",
-              symbolIds: currentCtx.targets.map((t) => t.symbolId),
-              assumptions: [],
-              status: retryErr instanceof TruncatedOutputError ? "truncated" : "schema_invalid",
-              error: retryErr.message,
-              usage: {
-                requests: fileRequests,
-                inputChars: currentCtx.sourceFile.content.length,
-                outputChars: 0,
-                ms: Date.now() - startMs,
-              },
-            });
-            continue;
-          }
-          throw retryErr;
+          const retryErrRequests = getErrorRequestsUsed(retryErr);
+          requestsUsed += retryErrRequests;
+          fileRequests += retryErrRequests;
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          const retryStatus =
+            retryErr instanceof TruncatedOutputError
+              ? "truncated"
+              : retryErr instanceof Error && retryErr.name === "ZodError"
+                ? "schema_invalid"
+                : "generation_failed";
+          proposedFiles.push({
+            fileId: mf.fileId,
+            testPath: mf.testPath,
+            content: "",
+            sha256: "",
+            symbolIds: currentCtx.targets.map((t) => t.symbolId),
+            assumptions: [],
+            status: retryStatus,
+            error: sanitizeOutput(retryMsg, { repoRoot: opts.repoRoot }),
+            usage: {
+              requests: fileRequests,
+              inputChars: currentCtx.sourceFile.content.length,
+              outputChars: 0,
+              ms: Date.now() - startMs,
+            },
+          });
+          continue;
         }
-      } else if (isTruncated) {
-        proposedFiles.push({
-          fileId: mf.fileId,
-          testPath: mf.testPath,
-          content: "",
-          sha256: "",
-          symbolIds: currentCtx.targets.map((t) => t.symbolId),
-          assumptions: [],
-          status: "truncated",
-          error: err.message,
-          usage: {
-            requests: fileRequests,
-            inputChars: currentCtx.sourceFile.content.length,
-            outputChars: 0,
-            ms: Date.now() - startMs,
-          },
-        });
-        continue;
-      } else if (isZod) {
-        proposedFiles.push({
-          fileId: mf.fileId,
-          testPath: mf.testPath,
-          content: "",
-          sha256: "",
-          symbolIds: currentCtx.targets.map((t) => t.symbolId),
-          assumptions: [],
-          status: "schema_invalid",
-          error: (err as Error).message,
-          usage: {
-            requests: fileRequests,
-            inputChars: currentCtx.sourceFile.content.length,
-            outputChars: 0,
-            ms: Date.now() - startMs,
-          },
-        });
-        continue;
       } else {
-        throw err;
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const failStatus = isTruncated ? "truncated" : isZod ? "schema_invalid" : "generation_failed";
+        proposedFiles.push({
+          fileId: mf.fileId,
+          testPath: mf.testPath,
+          content: "",
+          sha256: "",
+          symbolIds: currentCtx.targets.map((t) => t.symbolId),
+          assumptions: [],
+          status: failStatus,
+          error: sanitizeOutput(errMsg, { repoRoot: opts.repoRoot }),
+          usage: {
+            requests: fileRequests,
+            inputChars: currentCtx.sourceFile.content.length,
+            outputChars: 0,
+            ms: Date.now() - startMs,
+          },
+        });
+        continue;
       }
     }
 

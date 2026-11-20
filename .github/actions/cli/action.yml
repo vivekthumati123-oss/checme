@@ -81,6 +81,9 @@ runs:
         UA_APPROVAL_CHECK: ${{ inputs.approval-check }}
       run: |
         set -euo pipefail
+        if [ -n "${UA_NODE:-}" ]; then
+          export PATH="$(dirname "$UA_NODE"):$PATH"
+        fi
         ACTION_ROOT="$(cd "$ACTION_PATH/../../.." && pwd)"
         DIST_DIR="$ACTION_ROOT/dist"
         if [ ! -f "$DIST_DIR/cli.js" ]; then

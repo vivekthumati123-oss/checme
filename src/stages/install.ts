@@ -74,6 +74,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
         file,
         args,
         timeoutMs: config.limits.runTimeoutMinutes * 60_000,
+        killChildrenOnExit: true,
         logger: opts.logger,
       });
       res = handled.execRes;
@@ -96,7 +97,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
     if (res.timedOut) {
       const msg = `Install timed out for ${lang} after ${config.limits.runTimeoutMinutes} minutes.`;
       opts.logger?.error({ language: lang, timeoutMinutes: config.limits.runTimeoutMinutes }, msg);
-      throw new StageError(msg, EXIT_CODES.INTERNAL, "prepare", "install_timeout");
+      throw new StageError(msg, EXIT_CODES.CONFIG_OR_INPUT, "prepare", "install_timeout");
     }
 
     if (res.spawnError) {
@@ -112,7 +113,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallLangua
       opts.logger?.error({ language: lang, exitCode: res.exitCode, mismatch }, "Install command failed");
       throw new StageError(
         `Install failed for ${lang} (exit ${res.exitCode}): ${cleanTail}`,
-        mismatch ? EXIT_CODES.CONFIG_OR_INPUT : EXIT_CODES.INTERNAL,
+        EXIT_CODES.CONFIG_OR_INPUT,
         "prepare",
         mismatch?.reason ?? "install_failed",
       );

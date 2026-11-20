@@ -29,15 +29,16 @@ export async function upsertUnitAgentComment(params: {
     (c) => c.body.includes(UNIT_AGENT_COMMENT_PREFIX) || c.body.includes(UNIT_AGENT_SUMMARY_PREFIX),
   );
   const hit =
-    matching.find((c) => !c.userLogin || c.userLogin.endsWith("[bot]") || c.userLogin === "github-actions") ??
-    matching[0];
+    matching.find((c) => c.userLogin === "github-actions[bot]" || c.userLogin === "github-actions") ??
+    matching.find((c) => !c.userLogin || c.userLogin.endsWith("[bot]"));
   if (hit) {
     try {
       await params.github.updateIssueComment(params.owner, params.repo, hit.id, safeBody);
       return hit.id;
     } catch (err) {
-      const status =
-        err && typeof err === "object" && "status" in err ? (err as { status?: unknown }).status : undefined;
+      const rec =
+        err && typeof err === "object" ? (err as { status?: number; response?: { status?: number } }) : undefined;
+      const status = rec?.status ?? rec?.response?.status;
       if (status !== 403 && status !== 404) {
         throw err;
       }

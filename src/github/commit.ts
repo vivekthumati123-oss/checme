@@ -37,15 +37,25 @@ export function buildUnifiedNewFilePatch(entries: Array<{ path: string; content:
 export function isStaleHeadCommitError(err: unknown): boolean {
   const status = (err as { status?: number } | undefined)?.status;
   if (status === 409) return true;
+  const gqlErrors = (err as { errors?: Array<{ type?: string }> } | undefined)?.errors;
+  if (Array.isArray(gqlErrors) && gqlErrors.some((e) => e?.type === "STALE_DATA")) return true;
   const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-  return /expectedheadoid|expected head|not up to date|is at [0-9a-f]{7,40} but expected|head.*changed/.test(msg);
+  return /expectedheadoid|expected head|expected branch to point to|not up to date|is at [0-9a-f]{7,40} but expected|head.*changed/.test(
+    msg,
+  );
 }
 
 export function isBranchProtectionOrPermissionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
   // Only genuine branch-protection / ruleset / integration-permission refusals fall back to a patch.
   // Stale head, network, 422 validation, and rate limits must fail loudly.
-  if (/rate limit|abuse|expectedheadoid|expected head|not up to date|was provided invalid/.test(msg)) return false;
+  if (
+    /rate limit|abuse|expectedheadoid|expected head|expected branch to point to|not up to date|was provided invalid/.test(
+      msg,
+    )
+  ) {
+    return false;
+  }
   return (
     msg.includes("protected branch") ||
     msg.includes("branch protection") ||

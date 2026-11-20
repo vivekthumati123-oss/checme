@@ -4,16 +4,19 @@ import { matchToolchainMismatch } from "../../languages/toolchains";
 import { stripTerminalEscapesAndControls } from "../../telemetry";
 import { matchWrapperBootstrapFailure } from "./runners/java/detect";
 
-const RUNNER_ENV_PATTERNS: readonly RegExp[] = [
+const PYTHON_RUNNER_ENV_PATTERNS: readonly RegExp[] = [
   /\bunrecognized arguments:.*--cov\b/i,
   /\bNo module named ['"]?(?:pytest|pytest_cov|pytest-cov|coverage)['"]?/i,
+];
+
+const JS_RUNNER_ENV_PATTERNS: readonly RegExp[] = [
   /\bPreset\s+.+?\s+not found\b/i,
   /\bTest environment\s+.+?\s+cannot be found\b/i,
   /Cannot find (?:module|package) ['"](?:ts-jest|babel-jest|jest|vitest|@vitest\/[^'"]+|jest-environment-[^'"]+|@jest\/[^'"]+)['"]/i,
 ];
 
 const NETWORK_ENV_RE =
-  /(?:Could not resolve|Could not GET|Connect to [^\r\n]+ failed|PKIX path building failed|Temporary failure in name resolution)/i;
+  /(?:Could not resolve (?:artifact|dependencies|dependency|plugin|target)|Could not GET|Connect to [^\r\n]+ failed|PKIX path building failed|Temporary failure in name resolution)/i;
 const NETWORK_ERRNO_RE = /\b(?:ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)\b/;
 const NETWORK_CONTEXT_RE = /\b(?:npm|pip|pypi|registry|maven|gradle|downloading|fetch|proxy|ssl|tls|https?:)\b/i;
 
@@ -36,24 +39,30 @@ export function classifyExecutionFailure(
     return { reason: "tool_missing", detail: execRes.spawnError };
   }
 
-  if (RUNNER_ENV_PATTERNS.some((pattern) => pattern.test(combined))) {
+  const runnerEnvPatterns = [
+    ...(!language || language === "python" ? PYTHON_RUNNER_ENV_PATTERNS : []),
+    ...(!language || language === "javascript" ? JS_RUNNER_ENV_PATTERNS : []),
+  ];
+  if (runnerEnvPatterns.some((pattern) => pattern.test(combined))) {
     return {
       reason: "environment_error",
       detail: "Test runner plugin, preset, or dependency is missing in the environment.",
     };
   }
 
-  const mismatch = matchToolchainMismatch(combined, language);
+  const mismatch = matchToolchainMismatch(combined);
   if (mismatch) {
     return { reason: mismatch.reason, detail: mismatch.detail };
   }
 
-  const wrapperFail = matchWrapperBootstrapFailure(combined);
-  if (wrapperFail.isWrapperError) {
-    return {
-      reason: "wrapper_unavailable",
-      detail: wrapperFail.detail || "Build wrapper unavailable or failed to bootstrap.",
-    };
+  if (!language || language === "java") {
+    const wrapperFail = matchWrapperBootstrapFailure(combined);
+    if (wrapperFail.isWrapperError) {
+      return {
+        reason: "wrapper_unavailable",
+        detail: wrapperFail.detail || "Build wrapper unavailable or failed to bootstrap.",
+      };
+    }
   }
 
   if (NETWORK_ENV_RE.test(combined) || (NETWORK_ERRNO_RE.test(combined) && NETWORK_CONTEXT_RE.test(combined))) {
@@ -67,7 +76,7 @@ export function classifyExecutionFailure(
     /command not found|is not recognized as an internal or external command|No such file or directory/i.test(
       combined,
     ) &&
-    !/AssertionError|AssertionFailedError|\bFAIL\b|\bERROR\b/.test(combined)
+    !/AssertionError|AssertionFailedError|\b(?:FAIL|FAILED|ERROR)\b|FileNotFoundError|ENOENT:/.test(combined)
   ) {
     return {
       reason: "tool_missing",
@@ -76,7 +85,9 @@ export function classifyExecutionFailure(
   }
 
   if (
-    /Cannot find module|ERR_MODULE_NOT_FOUND|ModuleNotFoundError|ImportError|package .* does not exist/i.test(combined)
+    /Cannot find module|ERR_MODULE_NOT_FOUND|ModuleNotFoundError|ImportError|package .* does not exist|Could not resolve ["']|Failed to resolve import/i.test(
+      combined,
+    )
   ) {
     return {
       reason: "import_error",

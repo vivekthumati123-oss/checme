@@ -35,14 +35,22 @@ function readModifiers(node: Parser.SyntaxNode): {
 
   for (let i = 0; i < node.namedChildCount; i++) {
     const c = node.namedChild(i);
-    if (c?.type === "modifiers") {
-      const text = c.text;
-      if (/\bpublic\b/.test(text)) isPublic = true;
-      if (/\bprivate\b/.test(text)) isPrivate = true;
-      if (/\bprotected\b/.test(text)) isProtected = true;
-      if (/\babstract\b/.test(text)) isAbstract = true;
-      if (/\bstatic\b/.test(text)) isStatic = true;
-      if (/@Generated\b/.test(text)) isGenerated = true;
+    if (c?.type !== "modifiers") continue;
+    for (let j = 0; j < c.childCount; j++) {
+      const mod = c.child(j);
+      if (!mod) continue;
+      if (!mod.isNamed) {
+        if (mod.text === "public") isPublic = true;
+        else if (mod.text === "private") isPrivate = true;
+        else if (mod.text === "protected") isProtected = true;
+        else if (mod.text === "abstract") isAbstract = true;
+        else if (mod.text === "static") isStatic = true;
+      } else if (mod.type === "marker_annotation" || mod.type === "annotation") {
+        const annName = mod.childForFieldName("name")?.text ?? "";
+        if (/^(?:[\w.]+\.)?Generated$/.test(annName)) {
+          isGenerated = true;
+        }
+      }
     }
   }
 
@@ -62,7 +70,9 @@ function extractParameterTypes(fnNode: Parser.SyntaxNode): string[] {
         types.push(typeNode.text.replace(/\s+/g, ""));
       }
     } else if (param.type === "spread_parameter") {
-      const typeNode = param.childForFieldName("type") ?? param.namedChild(0);
+      const typeNode =
+        param.childForFieldName("type") ??
+        param.namedChildren.find((ch) => ch.type !== "modifiers" && ch.type !== "variable_declarator");
       if (typeNode) {
         const clean = typeNode.text.replace(/\s+/g, "");
         types.push(clean.endsWith("...") ? clean : `${clean}...`);

@@ -7,6 +7,7 @@ import { sha256Hex } from "../../core/context";
 import { fromRepoPath, isSafeRealPathInsideRoot } from "../../core/paths";
 import { formatGeneratedTestContent } from "../../core/text/eol";
 import { runCommand } from "../../exec/exec";
+import { resolveOfflineScriptPath, shouldUseOfflineWrapper } from "./runners/common";
 import { sanitizeFailureOutput } from "../../telemetry";
 
 export interface FormatLintResult {
@@ -70,6 +71,9 @@ export async function runFormatAndLintGate(params: {
         cwd: wdAbs,
         timeoutMs: 60_000,
         config: params.config,
+        killChildrenOnExit: true,
+        useOfflineWrapper: shouldUseOfflineWrapper(params.config, false),
+        offlineScriptPath: resolveOfflineScriptPath(params.repoRoot),
       });
       if (fmtRes.spawnError || fmtRes.exitCode !== 0) {
         const tail = sanitizeFailureOutput(`${fmtRes.stdout}\n${fmtRes.stderr}`, {
@@ -83,18 +87,28 @@ export async function runFormatAndLintGate(params: {
           detail: tail || fmtRes.spawnError || `Format exited with code ${fmtRes.exitCode}`,
         };
       }
-      if (isSafeRealPathInsideRoot(params.testPath, params.workspaceRoot, { requireRegularFileIfExists: true })) {
-        currentContent = formatGeneratedTestContent({
-          content: readFileSync(absTest, "utf8"),
-          language: params.language,
-          repoRoot: params.repoRoot,
-          targetPath: params.testPath,
-          configEol: params.config.files.eol,
-          provenanceHeader: params.config.policy.provenanceHeader,
-          referenceSourceContent: params.referenceSourceContent,
-        });
-        writeFileSync(absTest, currentContent, "utf8");
+      if (
+        !existsSync(absTest) ||
+        !isSafeRealPathInsideRoot(params.testPath, params.workspaceRoot, { requireRegularFileIfExists: true })
+      ) {
+        return {
+          ok: false,
+          formattedContent: currentContent,
+          sha256: sha256Hex(currentContent),
+          reason: "lint_error",
+          detail: `Formatted file "${params.testPath}" is missing or resolves outside workspace root.`,
+        };
       }
+      currentContent = formatGeneratedTestContent({
+        content: readFileSync(absTest, "utf8"),
+        language: params.language,
+        repoRoot: params.repoRoot,
+        targetPath: params.testPath,
+        configEol: params.config.files.eol,
+        provenanceHeader: params.config.policy.provenanceHeader,
+        referenceSourceContent: params.referenceSourceContent,
+      });
+      writeFileSync(absTest, currentContent, "utf8");
     }
 
     if (params.langConfig.lintCommand) {
@@ -114,6 +128,9 @@ export async function runFormatAndLintGate(params: {
         cwd: wdAbs,
         timeoutMs: 60_000,
         config: params.config,
+        killChildrenOnExit: true,
+        useOfflineWrapper: shouldUseOfflineWrapper(params.config, false),
+        offlineScriptPath: resolveOfflineScriptPath(params.repoRoot),
       });
       if (lintRes.spawnError || lintRes.exitCode !== 0) {
         const tail = sanitizeFailureOutput(`${lintRes.stdout}\n${lintRes.stderr}`, {

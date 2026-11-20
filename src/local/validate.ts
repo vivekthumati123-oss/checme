@@ -37,7 +37,7 @@ function walkStagedFiles(dirAbs: string, stagingAbs: string): string[] {
     const full = path.join(dirAbs, ent.name);
     if (ent.isDirectory()) {
       results.push(...walkStagedFiles(full, stagingAbs));
-    } else if (ent.isFile()) {
+    } else if (ent.isFile() || ent.isSymbolicLink()) {
       results.push(cleanRepoRelative(normalizeSlashes(path.relative(stagingAbs, full))));
     }
   }
@@ -73,6 +73,14 @@ export async function runLocalValidate(opts: RunLocalValidateOptions): Promise<L
   }
   const manifest = ManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
 
+  if (!isSafeRealPathInsideRoot(config.local.stagingDir, opts.repoRoot, { allowMissingLeaf: true })) {
+    throw new StageError(
+      `local.stagingDir escapes repository root: ${config.local.stagingDir}`,
+      EXIT_CODES.POLICY_OR_HASH,
+      "local",
+      "path_violation",
+    );
+  }
   const stagingAbs = path.resolve(opts.repoRoot, config.local.stagingDir);
   const stagedFiles = walkStagedFiles(stagingAbs, stagingAbs);
 

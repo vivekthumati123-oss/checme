@@ -15,12 +15,25 @@ export function writeValidationSnapshot(params: {
   const outFile = path.join(params.workDir, dirKey, "snapshot.json");
   const newFiles = params.proposed.files
     .filter((f) => f.status === "ok" && f.content.length > 0)
-    .map((f) => ({
-      fileId: f.fileId,
-      testPath: cleanRepoRelative(normalizeSlashes(f.testPath)),
-      sha256: sha256Hex(f.content),
-      bytes: Buffer.byteLength(f.content, "utf8"),
-    }));
+    .flatMap((f) => {
+      const testPath = cleanRepoRelative(normalizeSlashes(f.testPath));
+      if (
+        !testPath ||
+        testPath.split("/").includes("..") ||
+        path.posix.isAbsolute(testPath) ||
+        /^[A-Za-z]:/.test(testPath)
+      ) {
+        return [];
+      }
+      return [
+        {
+          fileId: f.fileId,
+          testPath,
+          sha256: sha256Hex(f.content),
+          bytes: Buffer.byteLength(f.content, "utf8"),
+        },
+      ];
+    });
 
   const byPath = new Map<string, (typeof newFiles)[number]>();
   if (params.mergeExisting && existsSync(outFile)) {

@@ -633,4 +633,33 @@ describe("github integration & commit stage", () => {
     });
     expect(res.committed).toBe(true);
   });
+
+  it("sanitizes markdown and HTML control chars in failure reasons inside PR summary", () => {
+    const rendered = renderPublishSummaryMarkdown({
+      finalArtifact: { ...makeFinalFixture(makeTempDir()), mode: "propose" },
+      report: {
+        schemaVersion: 1,
+        attempt: 1,
+        workspace: "copy",
+        environment: null,
+        patchCoverage: { beforePct: null, projectedPct: null },
+        toolVersions: { agentNode: "v22.0.0", languages: {}, warnings: [] },
+        notes: [],
+        files: [
+          {
+            fileId: "f1",
+            testPath: "test/math.test.ts",
+            outcome: "rejected",
+            gates: [{ gate: "static", status: "fail", detail: "<img src=x onerror=alert(1)> @everyone" }],
+            tests: [],
+            reason: "policy_violation",
+            sha256: "a".repeat(64),
+          },
+        ],
+      },
+      failedUpstreamJobs: [],
+      approvalEnvironment: "unit-agent-approval",
+    });
+    expect(rendered).not.toContain("<img");
+  });
 });

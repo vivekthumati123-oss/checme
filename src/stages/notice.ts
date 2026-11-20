@@ -72,9 +72,13 @@ function sanitizeCodeSpan(text: string, maxChars = 200, repoRoot?: string): stri
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  let prev = "";
+  for (let i = 0; i < 8 && clean !== prev; i += 1) {
+    prev = clean;
+    clean = clean.replace(/<(?!REPO>|WORKSPACE>|HOME>|TMP>)[^>]*>/g, "");
+  }
   clean = clean
-    .replace(/<[^>]*>/g, "")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^()]*(?:\([^()]*\)[^()]*)*\)/g, "$1")
     .replace(/(^|[\s(])@([a-zA-Z0-9_-])/g, "$1@\u200B$2")
     .replace(/(^|[\s(])#(\d+)/g, "$1#\u200B$2")
     .replace(/`/g, "'");
@@ -224,7 +228,7 @@ function formatStageReason(reason: string, repoRoot?: string): string {
 }
 
 function formatSkippedLanguage(item: NoticePlanSummary["skipped"][number], repoRoot?: string): string {
-  const lang = sanitizeCodeSpan(item.language, 40, repoRoot);
+  const lang = sanitizeForMarkdown(item.language, 40, repoRoot ? { repoRoot } : undefined);
   const reason = sanitizeCodeSpan(item.reason, 80, repoRoot);
   if (item.reason === "unsupported_framework" && item.found) {
     const found = sanitizeCodeSpan(item.found, 120, repoRoot);

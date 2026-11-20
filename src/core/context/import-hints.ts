@@ -212,8 +212,6 @@ export function computeImportHint(params: {
       rel = rel.replace(/\.cts$/i, appendJs ? ".cjs" : "");
     } else if (/\.js$/i.test(rel) && (!appendJs || cjsHint !== null)) {
       rel = rel.replace(/\.js$/i, "");
-    } else if (/\.cjs$/i.test(rel) && cjsHint !== null) {
-      rel = rel.replace(/\.cjs$/i, "");
     }
 
     if (cjsHint?.kind === "default") {

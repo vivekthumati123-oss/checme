@@ -120,7 +120,12 @@ function hasAnyNoticeStatus(workDir: string): boolean {
     if (!existsSync(p)) continue;
     try {
       const parsed = StageStatusSchema.parse(JSON.parse(readFileSync(p, "utf8")));
-      if (parsed.status !== "ok") return true;
+      if (parsed.status !== "ok") {
+        if (parsed.stage === "prepare" && parsed.status === "skipped" && parsed.reason === "no_targets") {
+          continue;
+        }
+        return true;
+      }
     } catch {
       return true;
     }
@@ -178,7 +183,8 @@ function hasAnyNoticeStatus(workDir: string): boolean {
 }
 
 function parsePositiveIntOption(raw: unknown, name: string, stage: StageName | "local"): number {
-  const n = Number.parseInt(String(raw), 10);
+  const trimmed = String(raw).trim();
+  const n = /^\d+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : Number.NaN;
   if (!Number.isFinite(n) || n < 1) {
     throw new StageError(
       `Invalid ${name}: "${String(raw)}". Expected integer >= 1.`,
@@ -361,6 +367,7 @@ export function buildProgram(track?: CliTrackContext): Command {
         repoRoot,
         workDir,
         configPath: opts.config,
+        planPath: cmdOpts.plan,
         diffSource: { kind: "git-range", base: range.baseSha, head: range.headSha },
         runId: process.env.GITHUB_RUN_ID,
         repoFullName: eventMeta.repoFullName,
@@ -487,6 +494,9 @@ export function buildProgram(track?: CliTrackContext): Command {
         manifest?: string;
         local?: boolean;
       }) => {
+        const opts = program.opts<GlobalOptions>();
+        const { repoRoot, workDir } = resolvePaths(opts, track);
+        if (track) track.stage = "validate1";
         const attempt = parsePositiveIntOption(cmdOpts.attempt ?? "1", "--attempt", "validate1");
         const stage: StageName = attempt === 1 ? "validate1" : "validate2";
         if (track) track.stage = stage;
@@ -498,8 +508,6 @@ export function buildProgram(track?: CliTrackContext): Command {
             "invalid_phase",
           );
         }
-        const opts = program.opts<GlobalOptions>();
-        const { repoRoot, workDir } = resolvePaths(opts, track);
         const result = await runValidate({
           repoRoot,
           workDir,
@@ -995,13 +1003,9 @@ export async function runCli(argv = process.argv): Promise<void> {
           ? EXIT_CODES.CONFIG_OR_INPUT
           : EXIT_CODES.INTERNAL;
     if (!isLocalCommand) {
-      const rawStage = err instanceof StageError ? err.stage : track.stage;
+      const rawStage = track.stage !== "local" ? track.stage : err instanceof StageError ? err.stage : track.stage;
       const stageForError: StageName =
-        rawStage === "local" || rawStage === "config" || rawStage === "guard"
-          ? track.stage === "local"
-            ? "prepare"
-            : track.stage
-          : rawStage;
+        rawStage === "local" || rawStage === "config" || rawStage === "guard" ? "prepare" : rawStage;
       writeStageStatus(track.workDir, mapErrorToStageStatus(stageForError, err, track.repoRoot).status);
     }
     const rawMsg = err instanceof Error ? err.message : String(err);

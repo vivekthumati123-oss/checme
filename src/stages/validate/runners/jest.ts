@@ -24,8 +24,12 @@ export async function runJestSingleFile(req: RunnerRequest): Promise<RunnerOutco
   const runArgs = [...args];
   if (runArgs.some((a) => /jest/i.test(a)) || /jest/i.test(file)) {
     runArgs.push("--runTestsByPath", relTestPath, "--json", `--outputFile=${jsonOut}`);
-    if (req.withCoverage && !runArgs.includes("--coverage")) {
-      runArgs.push("--coverage");
+    if (req.withCoverage) {
+      if (!runArgs.some((a) => a === "--coverage" || a.startsWith("--coverage="))) {
+        runArgs.push("--coverage");
+      }
+    } else if (runArgs.some((a) => a === "--coverage" || a === "--coverage=true")) {
+      runArgs.push("--coverage=false");
     }
   } else {
     runArgs.push(relTestPath);
@@ -44,7 +48,7 @@ export async function runJestSingleFile(req: RunnerRequest): Promise<RunnerOutco
     const tests = parseJsJsonReport(jsonOut);
     const outcome = buildBaseOutcome(execRes, tests);
     if (execRes.exitCode !== 0) {
-      const classified = classifyExecutionFailure(execRes);
+      const classified = classifyExecutionFailure(execRes, "javascript");
       outcome.failureReason = classified.reason;
       outcome.failureDetail = classified.detail;
     }

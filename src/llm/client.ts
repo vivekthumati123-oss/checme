@@ -28,13 +28,16 @@ export interface LlmTestClient {
     maxTestsPerSymbol: number;
     javaTestClassName?: string;
     attempt: number;
+    maxRequestsRemaining?: number;
   }): Promise<LlmInvokeResult>;
 
   repairTests(params: {
     context: FileContext;
     currentTestContent: string;
     failure: FailurePromptDetail;
+    javaTestClassName?: string;
     attempt: number;
+    maxRequestsRemaining?: number;
   }): Promise<LlmInvokeResult>;
 }
 
@@ -92,6 +95,7 @@ export class CopilotSdkTestClient implements LlmTestClient {
     maxTestsPerSymbol: number;
     javaTestClassName?: string;
     attempt: number;
+    maxRequestsRemaining?: number;
   }): Promise<LlmInvokeResult> {
     const systemPrompt = buildSystemPrompt(params.context.language, params.maxTestsPerSymbol);
     const userPrompt = renderGenerationPrompt({
@@ -103,6 +107,7 @@ export class CopilotSdkTestClient implements LlmTestClient {
       systemPrompt,
       userPrompt,
       expectedTestPath: params.context.conventions.testPath,
+      maxRequestsRemaining: params.maxRequestsRemaining,
     });
   }
 
@@ -110,18 +115,22 @@ export class CopilotSdkTestClient implements LlmTestClient {
     context: FileContext;
     currentTestContent: string;
     failure: FailurePromptDetail;
+    javaTestClassName?: string;
     attempt: number;
+    maxRequestsRemaining?: number;
   }): Promise<LlmInvokeResult> {
     const systemPrompt = buildSystemPrompt(params.context.language);
     const userPrompt = renderRepairPrompt({
       context: params.context,
       currentTestContent: params.currentTestContent,
       failure: params.failure,
+      javaTestClassName: params.javaTestClassName,
     });
     return this.invokeWithRetry({
       systemPrompt,
       userPrompt,
       expectedTestPath: params.context.conventions.testPath,
+      maxRequestsRemaining: params.maxRequestsRemaining,
     });
   }
 
@@ -129,8 +138,10 @@ export class CopilotSdkTestClient implements LlmTestClient {
     systemPrompt: string;
     userPrompt: string;
     expectedTestPath: string;
+    maxRequestsRemaining?: number;
   }): Promise<LlmInvokeResult> {
-    const maxAttempts = 3;
+    const budget = params.maxRequestsRemaining ?? 3;
+    const maxAttempts = Math.max(1, Math.min(3, budget));
     let totalRequestsUsed = 0;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const usageCounter = { count: 0 };
@@ -142,10 +153,13 @@ export class CopilotSdkTestClient implements LlmTestClient {
         };
       } catch (err) {
         totalRequestsUsed += Math.max(1, usageCounter.count);
-        if (attempt < maxAttempts && isTransientLlmError(err)) {
+        if (attempt < maxAttempts && totalRequestsUsed < budget && isTransientLlmError(err)) {
           const backoffMs = Math.min(5000, 1000 * attempt + Math.floor(Math.random() * 250));
           await sleepMs(backoffMs);
           continue;
+        }
+        if (err && typeof err === "object") {
+          (err as { requestsUsed?: number }).requestsUsed = totalRequestsUsed;
         }
         throw err;
       }
@@ -165,6 +179,7 @@ export class CopilotSdkTestClient implements LlmTestClient {
     const isolatedCwd = mkdtempSync(path.join(os.tmpdir(), "ua-copilot-cwd-"));
     let capturedSubmission: SubmitTestsArgs | null = null;
     let submissionPathMismatch: string | null = null;
+    let lastSchemaError: Error | null = null;
     let finishReason: string | undefined;
     let sawTruncation = false;
 
@@ -194,10 +209,20 @@ export class CopilotSdkTestClient implements LlmTestClient {
             submissionPathMismatch = `Model submitted unexpected testPath "${rawTestPath}" (expected "${params.expectedTestPath}").`;
             return { textResultForLlm: submissionPathMismatch, resultType: "failure" };
           }
-          capturedSubmission = SubmitTestsArgsSchema.parse({
-            ...args,
-            testPath: params.expectedTestPath,
-          });
+          try {
+            capturedSubmission = SubmitTestsArgsSchema.parse({
+              ...args,
+              testPath: params.expectedTestPath,
+            });
+            submissionPathMismatch = null;
+            lastSchemaError = null;
+          } catch (err) {
+            if (err instanceof Error && err.name === "ZodError") {
+              lastSchemaError = err;
+              return { textResultForLlm: err.message, resultType: "failure" };
+            }
+            throw err;
+          }
           return { textResultForLlm: "accepted", resultType: "success" };
         },
       });
@@ -227,8 +252,13 @@ export class CopilotSdkTestClient implements LlmTestClient {
 
       await session.sendAndWait({ prompt: params.userPrompt }, this.timeoutMs);
 
-      if (submissionPathMismatch) {
-        throw new Error(submissionPathMismatch);
+      if (!capturedSubmission) {
+        if (lastSchemaError) {
+          throw lastSchemaError;
+        }
+        if (submissionPathMismatch) {
+          throw new Error(submissionPathMismatch);
+        }
       }
 
       if ((sawTruncation || finishReason === "length") && !capturedSubmission) {

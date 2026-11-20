@@ -195,8 +195,11 @@ export class OctokitGitHubClient implements GitHubClientLike {
     const logins = new Set<string>();
     for (const entry of entries) {
       if (entry.state !== "approved" || !entry.user?.login) continue;
-      if (environmentName && Array.isArray(entry.environments) && entry.environments.length > 0) {
-        const matchesEnv = entry.environments.some((envObj) => envObj?.name === environmentName);
+      if (environmentName) {
+        const envLower = environmentName.toLowerCase();
+        const matchesEnv =
+          Array.isArray(entry.environments) &&
+          entry.environments.some((envObj) => envObj?.name?.toLowerCase() === envLower);
         if (!matchesEnv) continue;
       }
       logins.add(entry.user.login);

@@ -5,23 +5,20 @@ import { fileURLToPath } from "node:url";
 import { tokenizeCommand } from "../../../../config";
 import type { JavaConfig } from "../../../../contracts";
 import { classifyExecutionFailure } from "../../classify";
+import { buildBaseOutcome, type RunnerOutcome, type RunnerRequest } from "../common";
 import {
-  buildBaseOutcome,
-  resolveOfflineScriptPath,
-  shouldUseOfflineWrapper,
-  type RunnerOutcome,
-  type RunnerRequest,
-} from "../common";
-import { collectJavaXmlTestResults, runJavaCommandWithWrapperHandling, type JavaProjectResolution } from "./detect";
+  collectJavaXmlTestResults,
+  deleteStaleJavaXmlResults,
+  runJavaCommandWithWrapperHandling,
+  type JavaProjectResolution,
+} from "./detect";
 
 export function locateJacocoInitScript(): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
     path.resolve(moduleDir, "unit-agent-jacoco.init.gradle"),
-    path.resolve(moduleDir, "..", "..", "dist", "unit-agent-jacoco.init.gradle"),
-    path.resolve(process.cwd(), "dist", "unit-agent-jacoco.init.gradle"),
     path.resolve(moduleDir, "jacoco-init.gradle"),
-    path.resolve(process.cwd(), "src", "stages", "validate", "runners", "java", "jacoco-init.gradle"),
+    path.resolve(moduleDir, "..", "..", "..", "..", "dist", "unit-agent-jacoco.init.gradle"),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
@@ -32,18 +29,19 @@ export function locateJacocoInitScript(): string | null {
 export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectResolution): Promise<RunnerOutcome> {
   const javaCfg = req.languageConfig as JavaConfig;
   const parsed = tokenizeCommand(javaCfg.testCommand);
-  const execFile =
-    parsed.file === "gradle" || parsed.file === "./gradlew" || parsed.file === "gradlew"
-      ? proj.executable
-      : parsed.file;
+  const parsedBase = path
+    .basename(parsed.file)
+    .replace(/\.(bat|cmd|exe)$/i, "")
+    .toLowerCase();
+  const execFile = parsedBase === "gradle" || parsedBase === "gradlew" ? proj.executable : parsed.file;
 
   const testClass = req.javaTestClassName ?? path.posix.parse(req.testPath).name;
   const runArgs = [...parsed.args];
 
   const isMultiModule = proj.moduleRelFromBuildRoot !== ".";
-  const moduleTask = isMultiModule
-    ? `:${proj.moduleRelFromBuildRoot.split("/").filter(Boolean).join(":")}:test`
-    : "test";
+  const modulePrefix = isMultiModule ? `:${proj.moduleRelFromBuildRoot.split("/").filter(Boolean).join(":")}` : "";
+  const moduleTask = isMultiModule ? `${modulePrefix}:test` : "test";
+  const jacocoTask = isMultiModule ? `${modulePrefix}:jacocoTestReport` : "jacocoTestReport";
 
   if (isMultiModule) {
     const plainIdx = runArgs.indexOf("test");
@@ -51,6 +49,11 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
       runArgs[plainIdx] = moduleTask;
     } else if (!runArgs.some((a) => a.endsWith(":test"))) {
       runArgs.push(moduleTask);
+    }
+    for (let i = 0; i < runArgs.length; i += 1) {
+      if (runArgs[i] === "jacocoTestReport") {
+        runArgs[i] = jacocoTask;
+      }
     }
   } else if (!runArgs.some((a) => a === "test" || a.endsWith(":test"))) {
     runArgs.push("test");
@@ -74,12 +77,20 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
   if (initScript && !runArgs.includes("-I") && !runArgs.includes("--init-script")) {
     runArgs.push("-I", initScript);
   }
+  if (!runArgs.includes("--daemon") && !runArgs.includes("--no-daemon")) {
+    runArgs.push("--no-daemon");
+  }
   if (req.isFlakeRerun && !runArgs.includes("--rerun-tasks")) {
     runArgs.push("--rerun-tasks");
   }
   if (req.offline && !runArgs.includes("--offline")) {
     runArgs.push("--offline");
   }
+
+  const reportsDir = javaCfg.testResultsDir
+    ? path.resolve(proj.moduleDirAbs, javaCfg.testResultsDir)
+    : path.join(proj.moduleDirAbs, "build", "test-results", "test");
+  deleteStaleJavaXmlResults(reportsDir, testClass);
 
   const extraEnv = javaCfg.coverage.jacocoVersion ? { UA_JACOCO_VERSION: javaCfg.coverage.jacocoVersion } : undefined;
   const { execRes, wrapperUnavailable } = await runJavaCommandWithWrapperHandling({
@@ -93,13 +104,8 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
     timeoutMs: req.config.limits.perRunTestTimeoutSeconds * 1000,
     extraEnv,
     killChildrenOnExit: true,
-    useOfflineWrapper: shouldUseOfflineWrapper(req.config, req.offline),
-    offlineScriptPath: resolveOfflineScriptPath(req.repoRoot),
+    useOfflineWrapper: false,
   });
-
-  const reportsDir = javaCfg.testResultsDir
-    ? path.resolve(proj.moduleDirAbs, javaCfg.testResultsDir)
-    : path.join(proj.moduleDirAbs, "build", "test-results", "test");
 
   const tests = collectJavaXmlTestResults(reportsDir, testClass);
   const outcome = buildBaseOutcome(execRes, tests);
@@ -107,7 +113,7 @@ export async function runGradleSingleTest(req: RunnerRequest, proj: JavaProjectR
     outcome.failureReason = "wrapper_unavailable";
     outcome.failureDetail = wrapperUnavailable.detail;
   } else if (execRes.exitCode !== 0) {
-    const classified = classifyExecutionFailure(execRes);
+    const classified = classifyExecutionFailure(execRes, "java");
     outcome.failureReason = classified.reason;
     outcome.failureDetail = classified.detail;
   }

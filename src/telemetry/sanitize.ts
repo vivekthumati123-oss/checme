@@ -56,10 +56,14 @@ const SECRET_VALUE_PATTERNS: readonly SecretPatternRule[] = [
       /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g,
     replacement: "[REDACTED]",
   },
-  { pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g, replacement: "[REDACTED]" },
+  {
+    pattern:
+      /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----(?:\r?\n(?:[A-Za-z0-9+/= \t]+|Proc-Type:.*|DEK-Info:.*))*/g,
+    replacement: "[REDACTED]",
+  },
   { pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, replacement: "[REDACTED]" },
   { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, replacement: "[REDACTED]" },
-  { pattern: /\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{12,}\b/gi, replacement: "$1$2[REDACTED]" },
+  { pattern: /\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{12,}(?![A-Za-z0-9._~+/=-])/gi, replacement: "$1$2[REDACTED]" },
   { pattern: /((?:https?|ssh|ftp):\/\/[^:\s/@]+:)([^@\s]+)(@)/gi, replacement: "$1[REDACTED]$3" },
   { pattern: /AccountKey=[A-Za-z0-9+/=]{20,}/g, replacement: "[REDACTED]" },
   { pattern: /\bATATT3[A-Za-z0-9_\-=]{20,}/g, replacement: "[REDACTED]" },
@@ -99,9 +103,15 @@ export function collectSensitiveEnvValues(env: Record<string, string | undefined
   for (const [key, val] of Object.entries(env)) {
     if (!val || val.trim().length < 6) continue;
     if (EXPLICIT_FORBIDDEN_UPPER.has(key.toUpperCase()) || SECRET_ENV_KEY_RE.test(key)) {
+      const normalized = val.replace(/\r\n|\r/g, "\n");
       if (val.length >= 6) values.add(val);
-      const trimmed = val.trim();
+      if (normalized.length >= 6) values.add(normalized);
+      const trimmed = normalized.trim();
       if (trimmed.length >= 6) values.add(trimmed);
+      for (const line of normalized.split("\n")) {
+        const lineTrimmed = line.trim();
+        if (lineTrimmed.length >= 6) values.add(lineTrimmed);
+      }
     }
   }
   return [...values].sort((a, b) => b.length - a.length);
@@ -180,7 +190,7 @@ export function sanitizeForMarkdown(text: string, maxChars = 400, opts: Sanitize
   let prev = "";
   for (let i = 0; i < 8 && clean !== prev; i += 1) {
     prev = clean;
-    clean = clean.replace(/\[([^\]]*)\]\((?:[^()]+|\([^()]*\))*\)/g, "$1");
+    clean = clean.replace(/\[([^\]]*)\]\([^()]*(?:\([^()]*\)[^()]*)*\)/g, "$1");
   }
   // Strip raw HTML tags iteratively while keeping sanitizeOutput path placeholders intact.
   prev = "";

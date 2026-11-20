@@ -4,6 +4,7 @@ import picomatch from "picomatch";
 
 import { loadConfig, resolveTestPathForSource, runConfigCheck } from "../config";
 import {
+  ENVIRONMENT_FAILURE_REASONS,
   LocalDoctorSummarySchema,
   ToolVersionsSchema,
   type LanguageKey,
@@ -203,10 +204,13 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
       fix: "Fix invalid keys or types in .unit-agent.yml and run `config check`.",
     });
   } else {
+    const displayCfgPath = path.isAbsolute(cfgCheck.configPath)
+      ? path.relative(opts.repoRoot, cfgCheck.configPath)
+      : cfgCheck.configPath;
     checks.push({
       name: "config",
       status: "pass",
-      detail: `Loaded ${cleanRepoRelative(normalizeSlashes(path.relative(opts.repoRoot, cfgCheck.configPath)))} (${cfgCheck.summary?.enabledLanguages.join(", ") ?? ""}).`,
+      detail: `Loaded ${cleanRepoRelative(normalizeSlashes(displayCfgPath))} (${cfgCheck.summary?.enabledLanguages.join(", ") ?? ""}).`,
     });
   }
 
@@ -392,11 +396,13 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
         const sampleTest = findExistingSampleTestFile(opts.repoRoot, langCfg.workingDirectory, lang);
         if (sampleTest) {
           const fw = detectFrameworkForLanguage({ language: lang, langConfig: langCfg, repoRoot: opts.repoRoot });
-          const ws = prepareValidationWorkspace(opts.repoRoot, loadedConfig, "local");
+          let ws: ReturnType<typeof prepareValidationWorkspace> | null = null;
           try {
+            ws = prepareValidationWorkspace(opts.repoRoot, loadedConfig, "local");
             const runRes = await runSingleFileTests(fw.framework, {
               workspaceRoot: ws.root,
               repoRoot: opts.repoRoot,
+              workDir: opts.workDir,
               languageConfig: langCfg,
               config: loadedConfig,
               sourcePath: sampleTest,
@@ -404,7 +410,11 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
               withCoverage: false,
               offline: false,
             });
-            if (runRes.exitCode !== 0 && runRes.failureReason === "environment_error") {
+            if (
+              runRes.exitCode !== 0 &&
+              ((runRes.failureReason && ENVIRONMENT_FAILURE_REASONS.has(runRes.failureReason)) ||
+                runRes.failureReason === "timeout")
+            ) {
               checks.push({
                 name: `preflight:${lang}`,
                 status: "fail",
@@ -413,8 +423,20 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
               });
               continue;
             }
+          } catch (err) {
+            checks.push({
+              name: `preflight:${lang}`,
+              status: "fail",
+              detail: sanitizeFailureOutput(
+                err instanceof Error ? err.message : String(err),
+                { repoRoot: opts.repoRoot },
+                400,
+              ),
+              fix: "Fix local test runner environment before running local validate.",
+            });
+            continue;
           } finally {
-            ws.cleanup();
+            ws?.cleanup();
           }
         }
       }
@@ -444,7 +466,7 @@ export async function runLocalDoctor(opts: RunLocalDoctorOptions): Promise<Local
       } else if (baselineRes.status === "no_coverage") {
         checks.push({
           name: "coverage",
-          status: "fail",
+          status: loadedConfig.baseline.mode === "skip" ? "warn" : "fail",
           detail: `Baseline ran without producing expected coverage files.`,
           fix: "Configure your testCommand to emit coverage at languages.<lang>.coverageFile.",
         });

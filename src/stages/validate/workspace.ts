@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -153,12 +154,23 @@ export function prepareValidationWorkspace(
     );
   }
 
+  let canonicalCopyRoot = copyRoot;
+  try {
+    canonicalCopyRoot = realpathSync.native ? realpathSync.native(copyRoot) : realpathSync(copyRoot);
+  } catch {
+    try {
+      canonicalCopyRoot = realpathSync(copyRoot);
+    } catch {
+      canonicalCopyRoot = copyRoot;
+    }
+  }
+
   return {
-    root: copyRoot,
+    root: canonicalCopyRoot,
     isCopy: true,
     cleanup: () => {
       try {
-        rmSync(copyRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        rmSync(canonicalCopyRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       } catch {
         // Best-effort cleanup on Windows handles
       }

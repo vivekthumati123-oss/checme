@@ -1,7 +1,8 @@
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { LanguageKey } from "../contracts";
+import { isSafeRealPathInsideRoot } from "../core/paths";
 
 export const PROVENANCE_HEADER_JS = "// unit-agent:generated";
 export const PROVENANCE_HEADER_PY = "# unit-agent:generated";
@@ -43,11 +44,11 @@ export function renderTestPathPattern(opts: RenderTestPathOptions): string {
   const pkgPath = opts.packageName ? opts.packageName.replace(/\./g, "/") : "";
 
   let rendered = opts.pattern
-    .replace(/\{dir\}/g, dir)
-    .replace(/\{name\}/g, stem)
-    .replace(/\{Name\}/g, pascalName)
-    .replace(/\{package\}/g, pkgPath)
-    .replace(/\{ext\}/g, ext);
+    .replace(/\{dir\}/g, () => dir)
+    .replace(/\{name\}/g, () => stem)
+    .replace(/\{Name\}/g, () => pascalName)
+    .replace(/\{package\}/g, () => pkgPath)
+    .replace(/\{ext\}/g, () => ext);
 
   // Clean up duplicate or leading slashes when {dir} or {package} is empty.
   rendered = rendered.replace(/\/+/g, "/").replace(/^\.\//, "").replace(/^\//, "");
@@ -65,13 +66,13 @@ export function applyCollisionSuffix(
     return normalized.replace(/\.py$/i, `${pySuffix}.py`);
   }
   if (language === "java") {
-    if (/(?:Tests?|IT)\.java$/i.test(normalized)) {
-      return normalized.replace(/(Tests?|IT)?\.java$/i, "AgentTest.java");
+    if (/(?:Tests?|IT)\.java$/.test(normalized)) {
+      return normalized.replace(/(Tests?|IT)?\.java$/, "AgentTest.java");
     }
     return normalized.replace(/\.java$/i, "AgentTest.java");
   }
   // JavaScript / TypeScript: preserve `.test.<ext>` / `.spec.<ext>` so Jest/Vitest still match.
-  return normalized.replace(/(\.(?:test|spec))?\.([^.]+)$/i, (_, testMarker: string | undefined, ext: string) => {
+  return normalized.replace(/(\.(?:test|spec))?\.([^./]+)$/i, (_, testMarker: string | undefined, ext: string) => {
     return `${generatedSuffix}${testMarker ?? ""}.${ext}`;
   });
 }
@@ -111,9 +112,7 @@ export function resolveTestPathForSource(params: {
       try {
         const st = lstatSync(full);
         if (st.isSymbolicLink() || !st.isFile()) return null;
-        const realRoot = realpathSync(params.repoRoot);
-        const realFull = realpathSync(full);
-        if (!realFull.startsWith(realRoot + path.sep) && realFull !== realRoot) return null;
+        if (!isSafeRealPathInsideRoot(full, params.repoRoot, { requireRegularFileIfExists: true })) return null;
         return readFileSync(full, "utf8").slice(0, 256);
       } catch {
         return null;

@@ -40,9 +40,38 @@ export async function runLocalStatus(opts: RunLocalStatusOptions): Promise<Local
   const appliedPath = path.join(opts.workDir, "chat", "applied.json");
   const latestValidate = findHighestValidateAttempt(opts.workDir);
 
+  const manifestMtime = existsSync(manifestPath) ? statSync(manifestPath).mtimeMs : -1;
+  const validateIsFresh =
+    latestValidate !== null && (manifestMtime < 0 || statSync(latestValidate.reportPath).mtimeMs >= manifestMtime);
+  const proposedIsFresh =
+    existsSync(proposedChatPath) && (manifestMtime < 0 || statSync(proposedChatPath).mtimeMs >= manifestMtime);
+
+  const hasFreshStagedFile = (dirAbs: string): boolean => {
+    if (!existsSync(dirAbs)) return false;
+    const stack = [dirAbs];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      for (const ent of readdirSync(cur, { withFileTypes: true })) {
+        if (ent.isSymbolicLink()) continue;
+        const full = path.join(cur, ent.name);
+        if (ent.isDirectory()) {
+          stack.push(full);
+        } else if (ent.isFile()) {
+          const st = statSync(full);
+          if (st.size > 0 && (manifestMtime < 0 || st.mtimeMs >= manifestMtime)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  const stagingAbs = path.resolve(opts.repoRoot, config.local.stagingDir);
+  const stagedIsFresh = hasFreshStagedFile(stagingAbs);
+
   const appliedMtime = existsSync(appliedPath) ? statSync(appliedPath).mtimeMs : -1;
   const newerUpstreamMtimes = [
-    existsSync(manifestPath) ? statSync(manifestPath).mtimeMs : -1,
+    manifestMtime,
     existsSync(proposedChatPath) ? statSync(proposedChatPath).mtimeMs : -1,
     latestValidate ? statSync(latestValidate.reportPath).mtimeMs : -1,
   ];
@@ -51,16 +80,16 @@ export async function runLocalStatus(opts: RunLocalStatusOptions): Promise<Local
   let stage: LocalStatusSummary["stage"] = "none";
   if (appliedIsFresh) {
     stage = "applied";
-  } else if (latestValidate) {
+  } else if (validateIsFresh) {
     stage = "validated";
-  } else if (existsSync(proposedChatPath)) {
+  } else if (proposedIsFresh || stagedIsFresh) {
     stage = "drafted";
   } else if (existsSync(manifestPath)) {
     stage = "detected";
   }
 
   const files: LocalStatusSummary["files"] = [];
-  if (latestValidate) {
+  if (validateIsFresh && latestValidate) {
     try {
       const report = ValidationReportSchema.parse(JSON.parse(readFileSync(latestValidate.reportPath, "utf8")));
       for (const fr of report.files) {
@@ -115,7 +144,7 @@ export async function runLocalStatus(opts: RunLocalStatusOptions): Promise<Local
   return LocalStatusSummarySchema.parse({
     schemaVersion: 1,
     stage,
-    attempt: latestValidate?.attempt ?? null,
+    attempt: validateIsFresh ? (latestValidate?.attempt ?? null) : null,
     files,
     stagedFilesInGitStatus,
     next,

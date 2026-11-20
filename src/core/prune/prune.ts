@@ -20,8 +20,11 @@ interface ByteRemoval {
 function matchesFailingName(candidateName: string, failingSet: ReadonlySet<string>): boolean {
   if (failingSet.has(candidateName)) return true;
   for (const f of failingSet) {
-    // Handle runner formats like "Suite > test name", "pkg.ClassTest::method", "Class#method", or "test_foo[param]"
-    const baseFail = f.replace(/\[.*\]$/, "").trim();
+    // Handle runner formats like "Suite > test name", "pkg.ClassTest::method", "Class#method", "testAdd(int, int)[1]", or "test_foo[param]"
+    const baseFail = f
+      .replace(/\[[^\]]*\]$/, "")
+      .replace(/(?:\([^)]*\)|\{[^}]*\})$/, "")
+      .trim();
     if (
       baseFail === candidateName ||
       baseFail.endsWith(`> ${candidateName}`) ||
@@ -56,20 +59,46 @@ function applyRemovals(content: string, removals: ByteRemoval[]): string {
   return out.replace(/\n{3,}/g, "\n\n").replace(/(\r\n){3,}/g, "\r\n\r\n");
 }
 
+function decodeJsPruneString(node: Parser.SyntaxNode | null | undefined): string {
+  if (!node) return "";
+  if (
+    node.type === "string" ||
+    (node.type === "template_string" && !node.namedChildren.some((c) => c.type === "template_substitution"))
+  ) {
+    return node.text
+      .slice(1, -1)
+      .replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|u\{[0-9a-fA-F]+\}|n|r|t|\\|'|")/g, (m, esc: string) => {
+        if (esc === "n") return "\n";
+        if (esc === "r") return "\r";
+        if (esc === "t") return "\t";
+        if (esc === "\\" || esc === "'" || esc === '"') return esc;
+        if (esc.startsWith("x")) return String.fromCharCode(Number.parseInt(esc.slice(1), 16));
+        if (esc.startsWith("u{")) {
+          const cp = Number.parseInt(esc.slice(2, -1), 16);
+          return Number.isFinite(cp) && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+        }
+        if (esc.startsWith("u")) return String.fromCharCode(Number.parseInt(esc.slice(1), 16));
+        return m;
+      })
+      .trim();
+  }
+  return node.text.replace(/^['"`]|['"`]$/g, "").trim();
+}
+
 function findJsPruneTargets(
   root: Parser.SyntaxNode,
   failingSet: ReadonlySet<string>,
-): { removals: ByteRemoval[]; totalTests: number } {
+): { removals: ByteRemoval[]; auxRemovals?: ByteRemoval[]; totalTests: number } {
   const removals: ByteRemoval[] = [];
   let totalTests = 0;
 
   for (const call of root.descendantsOfType("call_expression")) {
     const fn = call.childForFieldName("function");
     const fnText = fn?.text ?? "";
-    const isDirectTest = /^(?:it|test)(?:\.concurrent)?$/.test(fnText);
+    const isDirectTest = /^(?:it|test)(?:\.(?:concurrent|sequential))?$/.test(fnText);
     const isEachTest =
       fn?.type === "call_expression" &&
-      /^(?:it|test)(?:\.concurrent)?\.each$/.test(fn.childForFieldName("function")?.text ?? "");
+      /^(?:it|test)(?:\.(?:concurrent|sequential))?\.(?:each|for)$/.test(fn.childForFieldName("function")?.text ?? "");
     if (!isDirectTest && !isEachTest) continue;
 
     const stmt = call.parent;
@@ -77,8 +106,7 @@ function findJsPruneTargets(
 
     totalTests += 1;
     const args = call.childForFieldName("arguments");
-    const firstArg = args?.namedChild(0);
-    const testName = firstArg ? firstArg.text.replace(/^['"`]|['"`]$/g, "").trim() : "";
+    const testName = decodeJsPruneString(args?.namedChild(0));
     if (testName && matchesFailingName(testName, failingSet)) {
       removals.push({
         start: stmt.startIndex,
@@ -94,9 +122,10 @@ function findJsPruneTargets(
 function findPythonPruneTargets(
   root: Parser.SyntaxNode,
   failingSet: ReadonlySet<string>,
-): { removals: ByteRemoval[]; totalTests: number } {
+): { removals: ByteRemoval[]; auxRemovals?: ByteRemoval[]; totalTests: number } {
   const removals: ByteRemoval[] = [];
-  const removedFnIds = new Set<number>();
+  const auxRemovals: ByteRemoval[] = [];
+  const removedNodeIds = new Set<number>();
   let totalTests = 0;
 
   for (const fn of root.descendantsOfType("function_definition")) {
@@ -106,7 +135,7 @@ function findPythonPruneTargets(
     totalTests += 1;
     if (matchesFailingName(name, failingSet)) {
       const targetNode = fn.parent?.type === "decorated_definition" ? fn.parent : fn;
-      removedFnIds.add(targetNode.id);
+      removedNodeIds.add(targetNode.id);
       removals.push({
         start: targetNode.startIndex,
         end: targetNode.endIndex,
@@ -115,8 +144,10 @@ function findPythonPruneTargets(
     }
   }
 
-  // If all statements inside a test class body were pruned, remove the empty class to preserve valid Python syntax.
-  for (const cls of root.descendantsOfType("class_definition")) {
+  // Bottom-up removal of classes whose bodies became empty so nested classes don't leave IndentationError.
+  const classes = root.descendantsOfType("class_definition");
+  for (let idx = classes.length - 1; idx >= 0; idx -= 1) {
+    const cls = classes[idx]!;
     const body = cls.childForFieldName("body");
     if (!body) continue;
     let remainingStmts = 0;
@@ -124,7 +155,7 @@ function findPythonPruneTargets(
     for (let i = 0; i < body.namedChildCount; i += 1) {
       const child = body.namedChild(i);
       if (!child || child.type === "comment") continue;
-      if (removedFnIds.has(child.id)) {
+      if (removedNodeIds.has(child.id)) {
         hadRemoved = true;
       } else {
         remainingStmts += 1;
@@ -132,7 +163,8 @@ function findPythonPruneTargets(
     }
     if (hadRemoved && remainingStmts === 0) {
       const clsTarget = cls.parent?.type === "decorated_definition" ? cls.parent : cls;
-      removals.push({
+      removedNodeIds.add(clsTarget.id);
+      auxRemovals.push({
         start: clsTarget.startIndex,
         end: clsTarget.endIndex,
         name: cls.childForFieldName("name")?.text ?? "class",
@@ -140,13 +172,13 @@ function findPythonPruneTargets(
     }
   }
 
-  return { removals, totalTests };
+  return { removals, auxRemovals, totalTests };
 }
 
 function findJavaPruneTargets(
   root: Parser.SyntaxNode,
   failingSet: ReadonlySet<string>,
-): { removals: ByteRemoval[]; totalTests: number } {
+): { removals: ByteRemoval[]; auxRemovals?: ByteRemoval[]; totalTests: number } {
   const removals: ByteRemoval[] = [];
   let totalTests = 0;
 
@@ -204,7 +236,7 @@ export async function pruneFailingTests(params: {
 
   const parser = await createTreeSitterParser(grammar, params.wasmDir);
   const tree = parser.parse(params.content);
-  let found: { removals: ByteRemoval[]; totalTests: number };
+  let found: { removals: ByteRemoval[]; auxRemovals?: ByteRemoval[]; totalTests: number };
   try {
     if (params.language === "javascript") {
       found = findJsPruneTargets(tree.rootNode, failingSet);
@@ -219,7 +251,7 @@ export async function pruneFailingTests(params: {
   }
 
   const droppedNames = found.removals.map((r) => r.name);
-  const disjointRemovals = mergeDisjointRemovals(found.removals);
+  const disjointRemovals = mergeDisjointRemovals([...found.removals, ...(found.auxRemovals ?? [])]);
 
   const prunedContent = applyRemovals(params.content, disjointRemovals);
   const droppedCount = found.removals.length;

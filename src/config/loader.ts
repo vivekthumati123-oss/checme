@@ -1,9 +1,10 @@
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { ZodError } from "zod";
 
 import { ConfigError, ConfigSchema, type LanguageKey, type UnitAgentConfig } from "../contracts";
+import { isSafeRealPathInsideRoot } from "../core/paths";
 
 export interface LoadedConfigResult {
   config: UnitAgentConfig;
@@ -36,7 +37,7 @@ export function collectConfigWarnings(config: UnitAgentConfig): string[] {
 }
 
 export function resolveConfigPath(repoRoot: string, explicitPath?: string): string {
-  const configured = explicitPath ?? process.env.UA_CONFIG ?? ".unit-agent.yml";
+  const configured = explicitPath?.trim() || process.env.UA_CONFIG?.trim() || ".unit-agent.yml";
   if (path.isAbsolute(configured)) {
     return configured;
   }
@@ -75,6 +76,7 @@ export function parseConfigYaml(
 }
 
 export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfigResult {
+  const configured = explicitPath?.trim() || process.env.UA_CONFIG?.trim() || ".unit-agent.yml";
   const configPath = resolveConfigPath(repoRoot, explicitPath);
   if (!existsSync(configPath)) {
     throw new ConfigError(
@@ -88,10 +90,8 @@ export function loadConfig(repoRoot: string, explicitPath?: string): LoadedConfi
       `Configuration path ${configPath.replace(/\\/g, "/")} must be a regular file, not a symlink or directory.`,
     );
   }
-  if (!explicitPath && !process.env.UA_CONFIG) {
-    const realRoot = realpathSync(repoRoot);
-    const realCfg = realpathSync(configPath);
-    if (!realCfg.startsWith(realRoot)) {
+  if (!path.isAbsolute(configured)) {
+    if (!isSafeRealPathInsideRoot(configured, repoRoot, { requireRegularFileIfExists: true })) {
       throw new ConfigError(`Configuration file resolves outside repository root.`);
     }
   }

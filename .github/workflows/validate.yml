@@ -54,9 +54,16 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - uses: ./.github/actions/setup-agent
+      - uses: actions/setup-node@v4
         with:
           node-version: "${{ inputs.agent-node-version }}"
+      - name: Export UA_NODE
+        shell: bash
+        run: echo "UA_NODE=$(node -p 'process.execPath')" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ua-agent-dist
+          path: ${{ runner.temp }}/unit-agent-dist
       - uses: actions/download-artifact@v4
         with:
           name: ua-prepare
@@ -82,15 +89,15 @@ jobs:
           java-version: ${{ fromJSON(inputs.toolchains).java.version }}
           java-version-file: ${{ fromJSON(inputs.toolchains).java.file }}
       - id: install
-        uses: ./.github/actions/cli
-        with:
-          command: install
+        shell: bash
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" install'
       - id: static
         if: steps.install.outcome == 'success' && steps.install.outputs.status == 'ok'
-        uses: ./.github/actions/cli
-        with:
-          command: validate
-          args: "--attempt ${{ inputs.attempt }} --phase static --input .unit-agent/${{ inputs.input-file }}"
+        shell: bash
+        env:
+          UA_ATTEMPT: ${{ inputs.attempt }}
+          UA_INPUT_FILE: ${{ inputs.input-file }}
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" validate --attempt "$UA_ATTEMPT" --phase static --input ".unit-agent/$UA_INPUT_FILE"'
       - uses: actions/upload-artifact@v4
         if: steps.static.outcome == 'success' && steps.static.outputs.status == 'ok'
         with:
@@ -101,10 +108,11 @@ jobs:
           if-no-files-found: warn
       - id: run
         if: steps.static.outcome == 'success' && steps.static.outputs.status == 'ok'
-        uses: ./.github/actions/cli
-        with:
-          command: validate
-          args: "--attempt ${{ inputs.attempt }} --phase run --input .unit-agent/${{ inputs.input-file }}"
+        shell: bash
+        env:
+          UA_ATTEMPT: ${{ inputs.attempt }}
+          UA_INPUT_FILE: ${{ inputs.input-file }}
+        run: '"${UA_NODE:-node}" --throw-deprecation "$RUNNER_TEMP/unit-agent-dist/cli.js" validate --attempt "$UA_ATTEMPT" --phase run --input ".unit-agent/$UA_INPUT_FILE"'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

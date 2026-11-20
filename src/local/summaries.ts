@@ -35,7 +35,7 @@ export function serializeBoundedSummary<T extends Record<string, unknown>>(
   }
 
   let encoded = JSON.stringify(draft);
-  if (Buffer.byteLength(encoded, "utf8") <= MAX_LOCAL_SUMMARY_BYTES) {
+  if (Buffer.byteLength(encoded, "utf8") + 1 <= MAX_LOCAL_SUMMARY_BYTES) {
     return `${encoded}\n`;
   }
 
@@ -44,7 +44,7 @@ export function serializeBoundedSummary<T extends Record<string, unknown>>(
   }
 
   let guard = 0;
-  while (Buffer.byteLength(encoded, "utf8") > MAX_LOCAL_SUMMARY_BYTES && guard < 5000) {
+  while (Buffer.byteLength(encoded, "utf8") + 1 > MAX_LOCAL_SUMMARY_BYTES && guard < 5000) {
     guard += 1;
     let changed = false;
     if (trimStep && trimStep(draft)) {
@@ -90,6 +90,33 @@ export function serializeBoundedSummary<T extends Record<string, unknown>>(
         draft.checks.pop();
         changed = true;
       }
+    }
+
+    if (!changed && Array.isArray(draft.failingTests) && draft.failingTests.length > 0) {
+      draft.failingTests.pop();
+      changed = true;
+    }
+    if (!changed && Array.isArray(draft.stagedFilesInGitStatus) && draft.stagedFilesInGitStatus.length > 0) {
+      draft.stagedFilesInGitStatus.pop();
+      changed = true;
+    }
+    if (!changed && Array.isArray(draft.refused) && draft.refused.length > 0) {
+      draft.refused.pop();
+      changed = true;
+    }
+    if (!changed && Array.isArray(draft.written) && draft.written.length > 0) {
+      draft.written.pop();
+      changed = true;
+    }
+    if (
+      !changed &&
+      draft.toolVersions &&
+      typeof draft.toolVersions === "object" &&
+      Array.isArray((draft.toolVersions as { warnings?: unknown[] }).warnings) &&
+      (draft.toolVersions as { warnings: unknown[] }).warnings.length > 0
+    ) {
+      (draft.toolVersions as { warnings: unknown[] }).warnings.pop();
+      changed = true;
     }
 
     if (!changed && typeof draft.next === "string" && draft.next.length > 120) {

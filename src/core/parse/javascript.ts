@@ -316,233 +316,241 @@ export async function parseJavaScriptFile(params: {
     params.wasmDir,
   );
   const tree = parser.parse(params.content);
-  const errorStats = computeErrorStats(tree);
-  const contentLines = params.content.split(/\r?\n/);
-  const isTestFile = isTestFilePath(params.filePath);
-  const isGeneratedFile = isGeneratedSourceContent(params.filePath, params.content);
-  const reExported = collectReExportedNames(tree.rootNode);
-  const cjsExported = collectCommonJsExports(tree.rootNode);
-  const allSymbols: ParsedSymbol[] = [];
-  let primaryClassName: string | undefined;
+  try {
+    const errorStats = computeErrorStats(tree);
+    const contentLines = params.content.split(/\r?\n/);
+    const isTestFile = isTestFilePath(params.filePath);
+    const isGeneratedFile = isGeneratedSourceContent(params.filePath, params.content);
+    const reExported = collectReExportedNames(tree.rootNode);
+    const cjsExported = collectCommonJsExports(tree.rootNode);
+    const allSymbols: ParsedSymbol[] = [];
+    let primaryClassName: string | undefined;
 
-  const resolveSymbolExports = (
-    localName: string,
-    explicitExported: boolean,
-  ): Array<{ name: string; exported: boolean }> => {
-    if (explicitExported || reExported.has(localName)) {
-      return [{ name: localName, exported: true }];
-    }
-    const cjsNames = cjsExported.get(localName);
-    if (cjsNames && cjsNames.length > 0) {
-      return cjsNames.map((name) => ({ name, exported: true }));
-    }
-    return [{ name: localName, exported: false }];
-  };
+    const resolveSymbolExports = (
+      localName: string,
+      explicitExported: boolean,
+    ): Array<{ name: string; exported: boolean }> => {
+      if (explicitExported || reExported.has(localName)) {
+        return [{ name: localName, exported: true }];
+      }
+      const cjsNames = cjsExported.get(localName);
+      if (cjsNames && cjsNames.length > 0) {
+        return cjsNames.map((name) => ({ name, exported: true }));
+      }
+      return [{ name: localName, exported: false }];
+    };
 
-  const pushFunctionSymbol = (opts: {
-    qualifiedName: string;
-    fnNode: Parser.SyntaxNode;
-    bodyNode: Parser.SyntaxNode | null;
-    exported: boolean;
-    signatureOverride?: string;
-  }): void => {
-    if (!opts.bodyNode) return;
-    allSymbols.push(
-      makeSymbol({
-        filePath: params.filePath,
-        contentLines,
-        qualifiedName: opts.qualifiedName,
-        kind: "function",
-        fnNode: opts.fnNode,
-        bodyNode: opts.bodyNode,
-        exported: opts.exported,
-        abstractFlag: false,
-        isTestFile,
-        signatureOverride: opts.signatureOverride,
-      }),
-    );
-  };
+    const pushFunctionSymbol = (opts: {
+      qualifiedName: string;
+      fnNode: Parser.SyntaxNode;
+      bodyNode: Parser.SyntaxNode | null;
+      exported: boolean;
+      signatureOverride?: string;
+    }): void => {
+      if (!opts.bodyNode) return;
+      allSymbols.push(
+        makeSymbol({
+          filePath: params.filePath,
+          contentLines,
+          qualifiedName: opts.qualifiedName,
+          kind: "function",
+          fnNode: opts.fnNode,
+          bodyNode: opts.bodyNode,
+          exported: opts.exported,
+          abstractFlag: false,
+          isTestFile,
+          signatureOverride: opts.signatureOverride,
+        }),
+      );
+    };
 
-  const pushClassSymbols = (classNode: Parser.SyntaxNode, className: string, exported: boolean): void => {
-    if (exported && !primaryClassName) {
-      primaryClassName = className;
-    }
-    allSymbols.push(...extractClassMembers(classNode, className, exported, params.filePath, contentLines, isTestFile));
-  };
+    const pushClassSymbols = (classNode: Parser.SyntaxNode, className: string, exported: boolean): void => {
+      if (exported && !primaryClassName) {
+        primaryClassName = className;
+      }
+      allSymbols.push(
+        ...extractClassMembers(classNode, className, exported, params.filePath, contentLines, isTestFile),
+      );
+    };
 
-  const processDeclaration = (rawDecl: Parser.SyntaxNode, explicitExported: boolean): void => {
-    const decl = unwrapExpression(rawDecl);
-    if (!decl) return;
+    const processDeclaration = (rawDecl: Parser.SyntaxNode, explicitExported: boolean): void => {
+      const decl = unwrapExpression(rawDecl);
+      if (!decl) return;
 
-    if (decl.type === "function_declaration" || decl.type === "generator_function_declaration") {
-      const name = decl.childForFieldName("name")?.text ?? "default";
-      const bodyNode = decl.childForFieldName("body");
-      if (!bodyNode) return;
-      for (const entry of resolveSymbolExports(name, explicitExported)) {
+      if (decl.type === "function_declaration" || decl.type === "generator_function_declaration") {
+        const name = decl.childForFieldName("name")?.text ?? "default";
+        const bodyNode = decl.childForFieldName("body");
+        if (!bodyNode) return;
+        for (const entry of resolveSymbolExports(name, explicitExported)) {
+          pushFunctionSymbol({
+            qualifiedName: entry.name,
+            fnNode: decl,
+            bodyNode,
+            exported: entry.exported,
+          });
+        }
+        return;
+      }
+
+      if (decl.type === "arrow_function" || decl.type === "function_expression" || decl.type === "generator_function") {
+        const bodyNode = decl.childForFieldName("body");
         pushFunctionSymbol({
-          qualifiedName: entry.name,
+          qualifiedName: decl.childForFieldName("name")?.text ?? "default",
           fnNode: decl,
           bodyNode,
-          exported: entry.exported,
+          exported: explicitExported,
         });
+        return;
       }
-      return;
-    }
 
-    if (decl.type === "arrow_function" || decl.type === "function_expression" || decl.type === "generator_function") {
-      const bodyNode = decl.childForFieldName("body");
-      pushFunctionSymbol({
-        qualifiedName: decl.childForFieldName("name")?.text ?? "default",
-        fnNode: decl,
-        bodyNode,
-        exported: explicitExported,
-      });
-      return;
-    }
-
-    if (decl.type === "lexical_declaration" || decl.type === "variable_declaration") {
-      for (let i = 0; i < decl.namedChildCount; i++) {
-        const declarator = decl.namedChild(i);
-        if (!declarator || declarator.type !== "variable_declarator") continue;
-        const name = declarator.childForFieldName("name")?.text;
-        const val = unwrapExpression(declarator.childForFieldName("value"));
-        if (!name || !val) continue;
-        if (val.type === "arrow_function" || val.type === "function_expression" || val.type === "generator_function") {
-          const bodyNode = val.childForFieldName("body");
-          if (!bodyNode) continue;
-          for (const entry of resolveSymbolExports(name, explicitExported)) {
-            pushFunctionSymbol({
-              qualifiedName: entry.name,
-              fnNode: declarator,
-              bodyNode,
-              exported: entry.exported,
-              signatureOverride: `const ${name} = ${extractSignatureFromNode(val, bodyNode)}`,
-            });
-          }
-        } else if (val.type === "class" || val.type === "class_declaration") {
-          for (const entry of resolveSymbolExports(name, explicitExported)) {
-            pushClassSymbols(val, entry.name, entry.exported);
+      if (decl.type === "lexical_declaration" || decl.type === "variable_declaration") {
+        for (let i = 0; i < decl.namedChildCount; i++) {
+          const declarator = decl.namedChild(i);
+          if (!declarator || declarator.type !== "variable_declarator") continue;
+          const name = declarator.childForFieldName("name")?.text;
+          const val = unwrapExpression(declarator.childForFieldName("value"));
+          if (!name || !val) continue;
+          if (
+            val.type === "arrow_function" ||
+            val.type === "function_expression" ||
+            val.type === "generator_function"
+          ) {
+            const bodyNode = val.childForFieldName("body");
+            if (!bodyNode) continue;
+            for (const entry of resolveSymbolExports(name, explicitExported)) {
+              pushFunctionSymbol({
+                qualifiedName: entry.name,
+                fnNode: declarator,
+                bodyNode,
+                exported: entry.exported,
+                signatureOverride: `const ${name} = ${extractSignatureFromNode(val, bodyNode)}`,
+              });
+            }
+          } else if (val.type === "class" || val.type === "class_declaration") {
+            for (const entry of resolveSymbolExports(name, explicitExported)) {
+              pushClassSymbols(val, entry.name, entry.exported);
+            }
           }
         }
+        return;
       }
-      return;
-    }
 
-    if (decl.type === "class" || decl.type === "class_declaration" || decl.type === "abstract_class_declaration") {
-      const className = decl.childForFieldName("name")?.text ?? "AnonymousClass";
-      for (const entry of resolveSymbolExports(className, explicitExported)) {
-        pushClassSymbols(decl, entry.name, entry.exported);
+      if (decl.type === "class" || decl.type === "class_declaration" || decl.type === "abstract_class_declaration") {
+        const className = decl.childForFieldName("name")?.text ?? "AnonymousClass";
+        for (const entry of resolveSymbolExports(className, explicitExported)) {
+          pushClassSymbols(decl, entry.name, entry.exported);
+        }
       }
-    }
-  };
+    };
 
-  const processInlineExportedValue = (
-    name: string,
-    fnNode: Parser.SyntaxNode,
-    val: Parser.SyntaxNode | null,
-    signaturePrefix?: string,
-  ): void => {
-    const unwrapped = unwrapExpression(val);
-    if (!unwrapped) return;
-    if (unwrapped.type === "arrow_function" || unwrapped.type === "function_expression") {
-      const bodyNode = unwrapped.childForFieldName("body");
-      if (!bodyNode) return;
-      pushFunctionSymbol({
-        qualifiedName: name,
-        fnNode,
-        bodyNode,
-        exported: true,
-        signatureOverride: signaturePrefix
-          ? `${signaturePrefix}${extractSignatureFromNode(unwrapped, bodyNode)}`
-          : undefined,
-      });
-    } else if (unwrapped.type === "class" || unwrapped.type === "class_declaration") {
-      pushClassSymbols(unwrapped, name, true);
-    }
-  };
-
-  for (let i = 0; i < tree.rootNode.namedChildCount; i++) {
-    const stmt = tree.rootNode.namedChild(i);
-    if (!stmt) continue;
-
-    if (stmt.type === "export_statement") {
-      const decl = stmt.childForFieldName("declaration");
-      if (decl) {
-        processDeclaration(decl, true);
-        continue;
+    const processInlineExportedValue = (
+      name: string,
+      fnNode: Parser.SyntaxNode,
+      val: Parser.SyntaxNode | null,
+      signaturePrefix?: string,
+    ): void => {
+      const unwrapped = unwrapExpression(val);
+      if (!unwrapped) return;
+      if (unwrapped.type === "arrow_function" || unwrapped.type === "function_expression") {
+        const bodyNode = unwrapped.childForFieldName("body");
+        if (!bodyNode) return;
+        pushFunctionSymbol({
+          qualifiedName: name,
+          fnNode,
+          bodyNode,
+          exported: true,
+          signatureOverride: signaturePrefix
+            ? `${signaturePrefix}${extractSignatureFromNode(unwrapped, bodyNode)}`
+            : undefined,
+        });
+      } else if (unwrapped.type === "class" || unwrapped.type === "class_declaration") {
+        pushClassSymbols(unwrapped, name, true);
       }
-      const val = stmt.childForFieldName("value");
-      if (val) {
-        processDeclaration(val, true);
-        continue;
-      }
-    } else if (stmt.type === "expression_statement") {
-      const expr = unwrapExpression(stmt.namedChild(0));
-      if (expr?.type === "assignment_expression") {
-        const { targets, value } = extractCjsAssignmentChain(expr);
-        if (targets.length === 0 || !value) continue;
-        let handledModuleExports = false;
-        for (const target of targets) {
-          if (target.kind === "named_export") {
-            processInlineExportedValue(target.name, expr, value, `exports.${target.name} = `);
-            continue;
-          }
-          if (handledModuleExports) continue;
-          handledModuleExports = true;
-          if (value.type === "object") {
-            for (let j = 0; j < value.namedChildCount; j++) {
-              const prop = value.namedChild(j);
-              if (!prop) continue;
-              if (prop.type === "method_definition") {
-                const key = stripPropertyKey(prop.childForFieldName("name")?.text);
-                const bodyNode = prop.childForFieldName("body");
-                if (key && bodyNode) {
-                  pushFunctionSymbol({
-                    qualifiedName: key,
-                    fnNode: prop,
-                    bodyNode,
-                    exported: true,
-                  });
-                }
-              } else if (prop.type === "pair") {
-                const key = stripPropertyKey(prop.childForFieldName("key")?.text);
-                const propVal = prop.childForFieldName("value");
-                if (key && propVal) {
-                  processInlineExportedValue(key, prop, propVal);
+    };
+
+    for (let i = 0; i < tree.rootNode.namedChildCount; i++) {
+      const stmt = tree.rootNode.namedChild(i);
+      if (!stmt) continue;
+
+      if (stmt.type === "export_statement") {
+        const decl = stmt.childForFieldName("declaration");
+        if (decl) {
+          processDeclaration(decl, true);
+          continue;
+        }
+        const val = stmt.childForFieldName("value");
+        if (val) {
+          processDeclaration(val, true);
+          continue;
+        }
+      } else if (stmt.type === "expression_statement") {
+        const expr = unwrapExpression(stmt.namedChild(0));
+        if (expr?.type === "assignment_expression") {
+          const { targets, value } = extractCjsAssignmentChain(expr);
+          if (targets.length === 0 || !value) continue;
+          let handledModuleExports = false;
+          for (const target of targets) {
+            if (target.kind === "named_export") {
+              processInlineExportedValue(target.name, expr, value, `exports.${target.name} = `);
+              continue;
+            }
+            if (handledModuleExports) continue;
+            handledModuleExports = true;
+            if (value.type === "object") {
+              for (let j = 0; j < value.namedChildCount; j++) {
+                const prop = value.namedChild(j);
+                if (!prop) continue;
+                if (prop.type === "method_definition") {
+                  const key = stripPropertyKey(prop.childForFieldName("name")?.text);
+                  const bodyNode = prop.childForFieldName("body");
+                  if (key && bodyNode) {
+                    pushFunctionSymbol({
+                      qualifiedName: key,
+                      fnNode: prop,
+                      bodyNode,
+                      exported: true,
+                    });
+                  }
+                } else if (prop.type === "pair") {
+                  const key = stripPropertyKey(prop.childForFieldName("key")?.text);
+                  const propVal = prop.childForFieldName("value");
+                  if (key && propVal) {
+                    processInlineExportedValue(key, prop, propVal);
+                  }
                 }
               }
+            } else if (value.type === "arrow_function" || value.type === "function_expression") {
+              const fnName = value.childForFieldName("name")?.text || "default";
+              processInlineExportedValue(fnName, expr, value, "module.exports = ");
+            } else if (value.type === "class" || value.type === "class_declaration") {
+              const clsName = value.childForFieldName("name")?.text || "AnonymousClass";
+              processInlineExportedValue(clsName, expr, value);
             }
-          } else if (value.type === "arrow_function" || value.type === "function_expression") {
-            const fnName = value.childForFieldName("name")?.text || "default";
-            processInlineExportedValue(fnName, expr, value, "module.exports = ");
-          } else if (value.type === "class" || value.type === "class_declaration") {
-            const clsName = value.childForFieldName("name")?.text || "AnonymousClass";
-            processInlineExportedValue(clsName, expr, value);
           }
         }
+      } else {
+        processDeclaration(stmt, false);
       }
-    } else {
-      processDeclaration(stmt, false);
     }
+
+    const imports = extractJsImports(tree.rootNode);
+    const eligibleSymbols =
+      isTestFile || isGeneratedFile ? [] : filterEligibleSymbols(allSymbols, params.minExecutableLines ?? 2);
+
+    return {
+      language: "javascript",
+      filePath: normalizeSlashes(params.filePath),
+      hasErrors: errorStats.hasErrors,
+      tooBroken: errorStats.tooBroken,
+      isTestFile,
+      isGeneratedFile,
+      primaryClassName,
+      imports,
+      allSymbols,
+      eligibleSymbols,
+    };
+  } finally {
+    tree.delete();
+    parser.delete();
   }
-
-  const imports = extractJsImports(tree.rootNode);
-  const eligibleSymbols =
-    isTestFile || isGeneratedFile ? [] : filterEligibleSymbols(allSymbols, params.minExecutableLines ?? 2);
-
-  tree.delete();
-  parser.delete();
-
-  return {
-    language: "javascript",
-    filePath: normalizeSlashes(params.filePath),
-    hasErrors: errorStats.hasErrors,
-    tooBroken: errorStats.tooBroken,
-    isTestFile,
-    isGeneratedFile,
-    primaryClassName,
-    imports,
-    allSymbols,
-    eligibleSymbols,
-  };
 }

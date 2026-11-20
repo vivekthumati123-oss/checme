@@ -115,17 +115,6 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
         });
       }
 
-      if (res.timedOut) {
-        const msg = `baseline exceeded ${config.baseline.timeoutMinutes} minutes; set baseline.mode: skip or a faster testCommand`;
-        perLanguage[lang] = {
-          status: "no_coverage",
-          patchCoveragePct: null,
-          detail: msg,
-        };
-        opts.logger?.warn({ language: lang, timeoutMinutes: config.baseline.timeoutMinutes }, msg);
-        continue;
-      }
-
       if (wrapperUnavailable) {
         perLanguage[lang] = {
           status: "red",
@@ -134,6 +123,17 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineArt
           mismatchReason: "wrapper_unavailable",
         };
         opts.logger?.warn({ language: lang, host: wrapperUnavailable.host }, wrapperUnavailable.detail);
+        continue;
+      }
+
+      if (res.timedOut) {
+        const msg = `baseline exceeded ${config.baseline.timeoutMinutes} minutes; set baseline.mode: skip or a faster testCommand`;
+        perLanguage[lang] = {
+          status: "no_coverage",
+          patchCoveragePct: null,
+          detail: msg,
+        };
+        opts.logger?.warn({ language: lang, timeoutMinutes: config.baseline.timeoutMinutes }, msg);
         continue;
       }
 

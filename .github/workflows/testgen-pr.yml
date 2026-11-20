@@ -12,7 +12,10 @@ jobs:
   testgen:
     if: >
       github.event.pull_request.draft == false &&
-      (github.event.action != 'labeled' || github.event.label.name == 'agent:testgen')
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'agent:testgen' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.head_commit.message, '[unit-agent]')
     permissions:
       contents: write
       pull-requests: write
@@ -24,4 +27,5 @@ jobs:
       package: "@l2/agent-testgen"
       runtime: copilot
       pr-number: ${{ github.event.pull_request.number }}
-    secrets: inherit
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}

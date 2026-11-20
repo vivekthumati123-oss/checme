@@ -17,6 +17,7 @@ import { checkCommitPath, safeHeredocDelimiter } from "../core/commit-paths";
 import { cleanRepoRelative, isSafeRealPathInsideRoot, normalizeSlashes } from "../core/paths";
 import { runStaticPolicyCheck } from "../core/policy";
 import {
+  MAX_COMMENT_LENGTH,
   buildCommitBody,
   buildCommitHeadline,
   buildCommentMarker,
@@ -116,6 +117,7 @@ async function abortCommitPolicyOrHash(params: {
 
 export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult> {
   const finalDir = path.join(opts.workDir, ARTIFACTS.final.dir);
+  const resolvedFinalDir = opts.finalPath ? path.dirname(path.resolve(opts.finalPath)) : finalDir;
   const finalFile = opts.finalPath ?? path.join(finalDir, "final.json");
 
   let finalArtifact = opts.finalArtifact;
@@ -187,7 +189,7 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
   }
 
   // 1b. Re-verify SHA-256 and Gates 1-2 for every file from final/validated/
-  const validatedRoot = path.join(finalDir, "validated");
+  const validatedRoot = path.join(resolvedFinalDir, "validated");
   const additions: Array<{ path: string; contentsBase64: string; rawContent: string }> = [];
   const seenPaths = new Set<string>();
   for (const f of finalArtifact.files) {
@@ -424,9 +426,9 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
     approvers = approvalOutcome.approvers;
   }
 
+  const serverUrl = (process.env.GITHUB_SERVER_URL || "https://github.com").replace(/\/+$/, "");
   const runUrl =
-    opts.runUrl ??
-    (numericRunId > 0 ? `https://github.com/${finalArtifact.repo}/actions/runs/${numericRunId}` : undefined);
+    opts.runUrl ?? (numericRunId > 0 ? `${serverUrl}/${finalArtifact.repo}/actions/runs/${numericRunId}` : undefined);
 
   const commitClient = opts.commitGithub ?? opts.github;
   const headline = buildCommitHeadline(additions.length);
@@ -492,10 +494,10 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
 
     // 5. Branch protection / permission fallback: build patch deterministically from verified additions
     const patchDiff = buildUnifiedNewFilePatch(additions.map((a) => ({ path: a.path, content: a.rawContent })));
-
+    const headRefSafe = sanitizeForMarkdown(prInfo.headRef || finalArtifact.headRef, 120);
     const delim = safeHeredocDelimiter(patchDiff);
     const fallbackMsg = [
-      `Could not push commit directly to \`${sanitizeForMarkdown(prInfo.headRef || finalArtifact.headRef, 120)}\` due to branch protection or permissions.`,
+      `Could not push commit directly to \`${headRefSafe}\` due to branch protection or permissions.`,
       "Apply the validated patch locally and push:",
       "",
       "```bash",
@@ -504,6 +506,17 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       delim,
       "```",
     ].join("\n");
+    const wrappedFallback = `<details><summary>Patch to apply manually (branch protection blocked direct commit)</summary>\n\n${fallbackMsg}\n\n</details>`;
+    const markerOverhead =
+      buildCommentMarker(finalArtifact.headSha).length + "\n## unit-agent: commit status\n\n\n".length;
+    const commentMessage =
+      markerOverhead + wrappedFallback.length <= MAX_COMMENT_LENGTH
+        ? wrappedFallback
+        : [
+            `Could not push commit directly to \`${headRefSafe}\` due to branch protection or permissions.`,
+            "",
+            "The validated patch exceeds the PR comment size limit; download `patch.diff` from the `ua-final` workflow Actions artifact and apply it locally with `git apply patch.diff`.",
+          ].join("\n");
 
     await postCommitFailureOrStatusComment({
       github: opts.github,
@@ -512,7 +525,7 @@ export async function runCommit(opts: RunCommitOptions): Promise<RunCommitResult
       repo,
       pr: finalArtifact.pr,
       headSha: finalArtifact.headSha,
-      message: `<details><summary>Patch to apply manually (branch protection blocked direct commit)</summary>\n\n${fallbackMsg}\n\n</details>`,
+      message: commentMessage,
     });
 
     writeStageStatus(opts.workDir, {

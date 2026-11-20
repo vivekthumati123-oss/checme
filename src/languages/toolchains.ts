@@ -62,16 +62,108 @@ function normalizeRepoRel(repoRoot: string, absPath: string): string {
   return cleanRepoRelative(normalizeSlashes(path.relative(repoRoot, absPath)));
 }
 
+function compareVerTuple(a: readonly [number, number], b: readonly [number, number]): number {
+  return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1];
+}
+
+function parseVersionTuple(raw: string): [number, number] | null {
+  const m = /(\d+)(?:\.(\d+))?/.exec(raw);
+  if (!m?.[1]) return null;
+  const major = Number.parseInt(m[1], 10);
+  const minor = m[2] ? Number.parseInt(m[2], 10) : 0;
+  return Number.isFinite(major) && Number.isFinite(minor) ? [major, minor] : null;
+}
+
+function satisfiesRangeClause(candidate: readonly [number, number], rawClause: string): boolean {
+  const tokens = rawClause
+    .trim()
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  if (tokens.length === 0) return false;
+  for (const token of tokens) {
+    const m = /^(>=|<=|!=|==|>|<|\^|~|=)?v?(\d+)(?:\.(\d+))?/.exec(token.replace(/\.x|\.\*/gi, ""));
+    if (!m?.[2]) continue;
+    const op = m[1] ?? "=";
+    const major = Number.parseInt(m[2], 10);
+    const minor = m[3] ? Number.parseInt(m[3], 10) : 0;
+    const target: [number, number] = [major, minor];
+    const cmp = compareVerTuple(candidate, target);
+    if (op === ">=" && cmp < 0) return false;
+    else if (op === ">" && cmp <= 0) return false;
+    else if (op === "<=" && cmp > 0) return false;
+    else if (op === "<" && cmp >= 0) return false;
+    else if (op === "!=" && cmp === 0) return false;
+    else if ((op === "==" || op === "=") && (m[3] ? cmp !== 0 : candidate[0] !== major)) return false;
+    else if (op === "^" && (cmp < 0 || candidate[0] !== major)) return false;
+    else if (op === "~" && (cmp < 0 || candidate[0] !== major || (m[3] !== undefined && candidate[1] !== minor))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function selectVersionFromRange(
+  rawSpec: string,
+  candidates: ReadonlyArray<readonly [number, number]>,
+  format: (t: readonly [number, number]) => string,
+): string | undefined {
+  const clean = stripLineComments(rawSpec);
+  const orClauses = clean
+    .split(/\|\|/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (orClauses.length === 0) return undefined;
+  const sorted = [...candidates].sort((a, b) => compareVerTuple(b, a));
+  for (const cand of sorted) {
+    if (orClauses.some((clause) => satisfiesRangeClause(cand, clause))) {
+      return format(cand);
+    }
+  }
+  return undefined;
+}
+
+const NODE_CANDIDATES: ReadonlyArray<readonly [number, number]> = [
+  [24, 0],
+  [22, 0],
+  [20, 0],
+  [18, 0],
+  [16, 0],
+];
+
+const PYTHON_CANDIDATES: ReadonlyArray<readonly [number, number]> = [
+  [3, 13],
+  [3, 12],
+  [3, 11],
+  [3, 10],
+  [3, 9],
+  [3, 8],
+];
+
 function resolveNodeVersionSpec(raw: string): string {
   const clean = stripLineComments(raw);
-  const clauses = clean
-    .split(/[\s,|]+/)
-    .map((c) => /(\d+(?:\.\d+)?)/.exec(c)?.[1])
-    .filter((v): v is string => Boolean(v));
-  if (clauses.length === 0) return "22";
-  // Pick highest major across multi-clause ranges like ">=18 <23" or "18 || 20"
-  clauses.sort((a, b) => Number.parseFloat(b) - Number.parseFloat(a));
-  return clauses[0]!;
+  if (!/[<>!=^~|]/.test(clean)) {
+    const exact = /(\d+(?:\.\d+)?)/.exec(clean)?.[1];
+    if (exact) return exact;
+  }
+  return (
+    selectVersionFromRange(clean, NODE_CANDIDATES, (t) => String(t[0])) ??
+    (() => {
+      const m = parseVersionTuple(clean);
+      return m ? String(m[0]) : "22";
+    })()
+  );
+}
+
+function resolvePythonVersionSpec(raw: string): string | undefined {
+  const clean = stripLineComments(raw);
+  if (!/[<>!=^~|]/.test(clean)) {
+    const mm = parseMajorMinor(clean);
+    return mm ? `${mm.major}.${mm.minor}` : undefined;
+  }
+  const fromRange = selectVersionFromRange(clean, PYTHON_CANDIDATES, (t) => `${t[0]}.${t[1]}`);
+  if (fromRange) return fromRange;
+  const mm = parseMajorMinor(clean);
+  return mm ? `${mm.major}.${mm.minor}` : undefined;
 }
 
 export function resolveJavaBuildTool(
@@ -80,7 +172,11 @@ export function resolveJavaBuildTool(
 ): { buildTool?: "maven" | "gradle"; ambiguous?: string } {
   const wdAbs = path.resolve(repoRoot, javaCfg.workingDirectory || ".");
   const hasPom = existsSync(path.join(wdAbs, "pom.xml"));
-  const hasGradle = existsSync(path.join(wdAbs, "build.gradle")) || existsSync(path.join(wdAbs, "build.gradle.kts"));
+  const hasGradle =
+    existsSync(path.join(wdAbs, "build.gradle")) ||
+    existsSync(path.join(wdAbs, "build.gradle.kts")) ||
+    existsSync(path.join(wdAbs, "settings.gradle")) ||
+    existsSync(path.join(wdAbs, "settings.gradle.kts"));
 
   if (javaCfg.buildTool !== "auto") {
     return { buildTool: javaCfg.buildTool };
@@ -167,35 +263,39 @@ export function resolveToolchainForLanguage(params: {
     } else if (params.langConfig.toolchainFile) {
       const tf = path.resolve(params.repoRoot, params.langConfig.toolchainFile);
       if (existsSync(tf)) {
-        const mm = parseMajorMinor(readFileSync(tf, "utf8"));
-        rawVersion = mm ? `${mm.major}.${mm.minor}` : readFileSync(tf, "utf8").trim();
-        source = "version-file";
-        fileRel = params.langConfig.toolchainFile;
+        const cleanPy = stripLineComments(readFileSync(tf, "utf8"));
+        rawVersion = resolvePythonVersionSpec(cleanPy);
+        if (rawVersion) {
+          source = "version-file";
+          fileRel = params.langConfig.toolchainFile;
+        }
       }
-    } else {
+    }
+    if (!rawVersion) {
       const pv = readFirstExisting([
         path.join(wdAbs, ".python-version"),
         path.join(params.repoRoot, ".python-version"),
       ]);
       if (pv) {
-        const cleanPv = stripLineComments(pv.content);
-        const mm = parseMajorMinor(cleanPv);
-        rawVersion = mm ? `${mm.major}.${mm.minor}` : undefined;
-        source = "version-file";
-        fileRel = normalizeRepoRel(params.repoRoot, pv.absPath);
-      } else {
-        for (const pypPath of [path.join(wdAbs, "pyproject.toml"), path.join(params.repoRoot, "pyproject.toml")]) {
-          if (!existsSync(pypPath)) continue;
-          const cleanToml = stripLineComments(readFileSync(pypPath, "utf8"));
-          const m = /requires-python\s*=\s*["']([^"']+)["']/i.exec(cleanToml);
-          if (m?.[1]) {
-            const mm = parseMajorMinor(m[1]);
-            if (mm) {
-              rawVersion = `${mm.major}.${mm.minor}`;
-              source = "version-file";
-              fileRel = normalizeRepoRel(params.repoRoot, pypPath);
-              break;
-            }
+        rawVersion = resolvePythonVersionSpec(pv.content);
+        if (rawVersion) {
+          source = "version-file";
+          fileRel = normalizeRepoRel(params.repoRoot, pv.absPath);
+        }
+      }
+    }
+    if (!rawVersion) {
+      for (const pypPath of [path.join(wdAbs, "pyproject.toml"), path.join(params.repoRoot, "pyproject.toml")]) {
+        if (!existsSync(pypPath)) continue;
+        const cleanToml = stripLineComments(readFileSync(pypPath, "utf8"));
+        const m = /requires-python\s*=\s*["']([^"']+)["']/i.exec(cleanToml);
+        if (m?.[1]) {
+          const resolved = resolvePythonVersionSpec(m[1]);
+          if (resolved) {
+            rawVersion = resolved;
+            source = "version-file";
+            fileRel = normalizeRepoRel(params.repoRoot, pypPath);
+            break;
           }
         }
       }
@@ -223,11 +323,17 @@ export function resolveToolchainForLanguage(params: {
   } else if (javaCfg.toolchainFile) {
     const tf = path.resolve(params.repoRoot, javaCfg.toolchainFile);
     if (existsSync(tf)) {
-      rawVersion = String(extractJavaMajor(readFileSync(tf, "utf8")) ?? "21");
-      source = "version-file";
-      fileRel = javaCfg.toolchainFile;
+      const cleanTf = stripLineComments(readFileSync(tf, "utf8"));
+      const rawTf = tf.endsWith(".sdkmanrc") ? /java=([^\s#]+)/.exec(cleanTf)?.[1] : cleanTf;
+      const major = extractJavaMajor(rawTf);
+      if (major !== null) {
+        rawVersion = String(major);
+        source = "version-file";
+        fileRel = javaCfg.toolchainFile;
+      }
     }
-  } else {
+  }
+  if (!rawVersion) {
     const jv = readFirstExisting([
       path.join(wdAbs, ".java-version"),
       path.join(wdAbs, ".sdkmanrc"),
@@ -243,12 +349,16 @@ export function resolveToolchainForLanguage(params: {
         source = "version-file";
         fileRel = normalizeRepoRel(params.repoRoot, jv.absPath);
       }
-    } else {
-      for (const pomPath of [path.join(wdAbs, "pom.xml"), path.join(params.repoRoot, "pom.xml")]) {
-        if (!existsSync(pomPath)) continue;
-        const cleanXml = readFileSync(pomPath, "utf8").replace(/<!--[\s\S]*?-->/g, "");
-        const m = /<(?:maven\.compiler\.(?:release|source|target)|java\.version)>\s*([^<\s]+)\s*</.exec(cleanXml);
-        const major = extractJavaMajor(m?.[1]);
+    }
+  }
+  if (!rawVersion) {
+    for (const pomPath of [path.join(wdAbs, "pom.xml"), path.join(params.repoRoot, "pom.xml")]) {
+      if (!existsSync(pomPath)) continue;
+      const cleanXml = readFileSync(pomPath, "utf8").replace(/<!--[\s\S]*?-->/g, "");
+      for (const m of cleanXml.matchAll(
+        /<(?:maven\.compiler\.(?:release|source|target)|java\.version)>\s*([^<\s]+)\s*</g,
+      )) {
+        const major = extractJavaMajor(m[1]);
         if (major !== null) {
           rawVersion = String(major);
           source = "version-file";
@@ -256,28 +366,30 @@ export function resolveToolchainForLanguage(params: {
           break;
         }
       }
-      if (!rawVersion) {
-        for (const grPath of [
-          path.join(wdAbs, "build.gradle"),
-          path.join(wdAbs, "build.gradle.kts"),
-          path.join(params.repoRoot, "build.gradle"),
-          path.join(params.repoRoot, "build.gradle.kts"),
-        ]) {
-          if (!existsSync(grPath)) continue;
-          const cleanGradle = readFileSync(grPath, "utf8")
-            .replace(/\/\*[\s\S]*?\*\//g, "")
-            .replace(/\/\/[^\r\n]*/g, "");
-          const m = /(?:JavaLanguageVersion\.of\(\s*(\d+)\s*\)|sourceCompatibility\s*=?\s*['"]?([0-9.]+)['"]?)/.exec(
-            cleanGradle,
-          );
-          const major = extractJavaMajor(m?.[1] ?? m?.[2]);
-          if (major !== null) {
-            rawVersion = String(major);
-            source = "version-file";
-            fileRel = normalizeRepoRel(params.repoRoot, grPath);
-            break;
-          }
-        }
+      if (rawVersion) break;
+    }
+  }
+  if (!rawVersion) {
+    for (const grPath of [
+      path.join(wdAbs, "build.gradle"),
+      path.join(wdAbs, "build.gradle.kts"),
+      path.join(params.repoRoot, "build.gradle"),
+      path.join(params.repoRoot, "build.gradle.kts"),
+    ]) {
+      if (!existsSync(grPath)) continue;
+      const cleanGradle = readFileSync(grPath, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\r\n]*/g, "");
+      const m =
+        /(?:JavaLanguageVersion\.of\(\s*(\d+)\s*\)|JavaVersion\.VERSION_(?:1_)?(\d+)|(?:sourceCompatibility|targetCompatibility)\s*=?\s*['"]?([0-9.]+)['"]?)/.exec(
+          cleanGradle,
+        );
+      const major = extractJavaMajor(m?.[1] ?? m?.[2] ?? m?.[3]);
+      if (major !== null) {
+        rawVersion = String(major);
+        source = "version-file";
+        fileRel = normalizeRepoRel(params.repoRoot, grPath);
+        break;
       }
     }
   }

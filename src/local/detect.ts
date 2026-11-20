@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
 
@@ -43,7 +43,8 @@ function getLatestSourceMtimeMs(
   files?: readonly string[],
 ): number {
   let latest = 0;
-  if (files && files.length > 0) {
+  const hasGlob = Boolean(files?.some((f) => /[*?[\]{}!]/.test(f)));
+  if (files && files.length > 0 && !hasGlob) {
     for (const rel of files) {
       const abs = path.join(repoRoot, rel);
       if (existsSync(abs)) {
@@ -52,6 +53,13 @@ function getLatestSourceMtimeMs(
     }
     return latest;
   }
+  const filesMatcher =
+    files && files.length > 0
+      ? picomatch(
+          files.map((g) => cleanRepoRelative(normalizeSlashes(g))),
+          { dot: true, nocase: process.platform === "win32" },
+        )
+      : null;
   const wdAbs = path.resolve(repoRoot, workingDir || ".");
   if (!existsSync(wdAbs)) return latest;
   const srcMatcher = picomatch(
@@ -89,7 +97,7 @@ function getLatestSourceMtimeMs(
         stack.push(full);
       } else if (ent.isFile()) {
         const wdRel = cleanRepoRelative(normalizeSlashes(path.relative(wdAbs, full)));
-        if (srcMatcher(wdRel)) {
+        if (srcMatcher(wdRel) && (!filesMatcher || filesMatcher(repoRel))) {
           latest = Math.max(latest, statSync(full).mtimeMs);
         }
       }
@@ -260,6 +268,21 @@ export async function runLocalDetect(opts: RunLocalDetectOptions): Promise<{
       }
       baselineStatus = baseRes.status;
       baseline = baseRes;
+    }
+  }
+
+  const prepareDir = path.join(opts.workDir, ARTIFACTS.prepare.dir);
+  mkdirSync(prepareDir, { recursive: true });
+  writeFileSync(path.join(prepareDir, "baseline.json"), `${JSON.stringify(baseline, null, 2)}\n`, "utf8");
+
+  if (existsSync(opts.workDir)) {
+    for (const ent of readdirSync(opts.workDir, { withFileTypes: true })) {
+      if (ent.name === "final" || ent.name.startsWith("validate") || ent.name.startsWith("snapshot")) {
+        rmSync(path.join(opts.workDir, ent.name), { recursive: true, force: true });
+      }
+    }
+    for (const staleChat of ["proposed.json", "applied.json"]) {
+      rmSync(path.join(opts.workDir, "chat", staleChat), { force: true });
     }
   }
 

@@ -128,10 +128,39 @@ export async function probeTestRunner(params: {
 
   // Check local wrapper existence if command starts with ./
   if (file.startsWith("./") || file.startsWith(".\\")) {
+    const baseFile = file.replace(/\\/g, "/");
+    const expectedName =
+      process.platform === "win32"
+        ? baseFile === "./gradlew"
+          ? "gradlew.bat"
+          : baseFile === "./mvnw"
+            ? "mvnw.cmd"
+            : null
+        : null;
     const candidateAbs = path.resolve(params.wdAbs, file);
-    const winBat = `${candidateAbs}.bat`;
-    const winCmd = `${candidateAbs}.cmd`;
-    if (!existsSync(candidateAbs) && !(process.platform === "win32" && (existsSync(winBat) || existsSync(winCmd)))) {
+    const expectedAbs = expectedName ? path.resolve(params.wdAbs, expectedName) : candidateAbs;
+    const hasWrapper =
+      existsSync(expectedAbs) ||
+      existsSync(candidateAbs) ||
+      (process.platform === "win32" && (existsSync(`${candidateAbs}.bat`) || existsSync(`${candidateAbs}.cmd`)));
+    if (!hasWrapper) {
+      if (params.language === "java") {
+        const javaCfg = params.config.languages.java;
+        const pref = javaCfg?.toolPreference ?? [];
+        if (javaCfg && javaCfg.strictWrapper === false && pref.includes("system")) {
+          const sysTool = baseName.startsWith("gradle") ? "gradle" : baseName.startsWith("mvn") ? "mvn" : null;
+          if (sysTool) {
+            const sysProbe = await runCommand(sysTool, ["-v"], {
+              cwd: params.wdAbs,
+              timeoutMs: 15_000,
+              config: params.config,
+            });
+            if (!sysProbe.spawnError && sysProbe.exitCode === 0) {
+              return { ok: true, detail: `wrapper missing; system ${sysTool} available` };
+            }
+          }
+        }
+      }
       return {
         ok: false,
         reason: "wrapper_unavailable",
@@ -197,14 +226,18 @@ export async function probeTestRunner(params: {
     if (mIdx >= 0 && mIdx + 1 < args.length) {
       const preMArgs = args.slice(0, mIdx);
       const mod = args[mIdx + 1]!;
+      if (!/^[A-Za-z0-9_.]+$/.test(mod)) {
+        return {
+          ok: false,
+          reason: "environment_error",
+          detail: `Invalid Python module name "${mod}" in "${params.testCommand}".`,
+          fix: `Use a valid dotted module name in languages.${params.language}.testCommand.`,
+        };
+      }
       const modProbeArgs =
         mod === "pytest"
           ? [...preMArgs, "-m", "pytest", "--version"]
-          : [
-              ...preMArgs,
-              "-c",
-              `import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(${JSON.stringify(mod)}) else 1)`,
-            ];
+          : [...preMArgs, "-c", `import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('${mod}') else 1)`];
       const modProbe = await runCommand(file, modProbeArgs, {
         cwd: params.wdAbs,
         timeoutMs: 15_000,

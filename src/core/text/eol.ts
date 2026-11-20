@@ -71,7 +71,7 @@ export function applyProvenanceHeader(content: string, language: LanguageKey, en
   if (hasProvenanceHeader(content)) return content;
   const header = language === "python" ? PROVENANCE_HEADER_PY : PROVENANCE_HEADER_JS;
   const eol: LineEnding = content.includes("\r\n") ? "\r\n" : "\n";
-  return `${header}${eol}${content}`;
+  return `${header}${eol}${content.replace(/^\uFEFF/, "")}`;
 }
 
 export function formatGeneratedTestContent(params: {

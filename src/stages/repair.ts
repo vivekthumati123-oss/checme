@@ -20,7 +20,7 @@ import { sha256Hex } from "../core/context";
 import { isSafeRealPathInsideRoot } from "../core/paths";
 import { formatGeneratedTestContent } from "../core/text/eol";
 import { CopilotSdkTestClient, FakeLlmClient, type LlmTestClient } from "../llm";
-import { writeGitHubOutput, writeStageStatus } from "../telemetry";
+import { sanitizeOutput, writeGitHubOutput, writeStageStatus } from "../telemetry";
 import { loadPrepareConfig, loadManifest } from "./detect";
 
 export interface RunRepairOptions {
@@ -154,8 +154,11 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
           reason: failEntry.reason,
           message: `Failed gate "${failEntry.gate}" (${failEntry.reason})`,
           excerpt: failEntry.output,
+          failingTests: failEntry.failingTests,
         },
+        javaTestClassName: mf.testClassName,
         attempt: 2,
+        maxRequestsRemaining: Math.max(1, config.limits.maxRequestsPerRun - requestsUsed),
       });
       requestsUsed += res.requestsUsed;
 
@@ -191,10 +194,15 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
       });
     } catch (err) {
       if (err instanceof AuthError) {
-        throw err;
+        throw err.stage === "repair" ? err : new AuthError(err.message, err.reason ?? "auth_failure", "repair");
       }
-      requestsUsed += 1;
-      const msg = err instanceof Error ? err.message : String(err);
+      const rawUsed =
+        err && typeof err === "object" && "requestsUsed" in err
+          ? (err as { requestsUsed?: unknown }).requestsUsed
+          : undefined;
+      const errRequests = typeof rawUsed === "number" && Number.isFinite(rawUsed) && rawUsed > 0 ? rawUsed : 1;
+      requestsUsed += errRequests;
+      const msg = sanitizeOutput(err instanceof Error ? err.message : String(err), { repoRoot: opts.repoRoot });
       repairedFiles.push({
         fileId: mf.fileId,
         testPath: mf.testPath,
@@ -205,7 +213,7 @@ export async function runRepair(opts: RunRepairOptions): Promise<Proposed> {
         status: "generation_failed",
         error: msg,
         usage: {
-          requests: 1,
+          requests: errRequests,
           inputChars: prevPf.content.length + failEntry.output.length,
           outputChars: 0,
           ms: Date.now() - startMs,

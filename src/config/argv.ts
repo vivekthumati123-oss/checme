@@ -126,6 +126,9 @@ export function isArgvOnly(command: string): boolean {
  */
 export function tokenizeCommand(command: string, files?: readonly string[]): { file: string; args: string[] } {
   const rawTokens = parseArgvTokens(command);
+  if (rawTokens[0] === "{files}") {
+    throw new ArgvParseError('placeholder "{files}" cannot be the command executable');
+  }
   const expanded: string[] = [];
 
   for (const token of rawTokens) {

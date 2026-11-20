@@ -84,7 +84,13 @@ export function parseJobResultsEnv(rawJson?: string): Record<string, string> {
         "result" in v &&
         typeof (v as { result?: unknown }).result === "string"
       ) {
-        out[k] = (v as { result: string }).result;
+        const rec = v as { result: string; outputs?: { status?: unknown } };
+        const outputStatus = typeof rec.outputs?.status === "string" ? rec.outputs.status : undefined;
+        if (rec.result === "success" && (outputStatus === "soft_fail" || outputStatus === "error")) {
+          out[k] = outputStatus;
+        } else {
+          out[k] = rec.result;
+        }
       }
     }
     return out;
@@ -127,12 +133,20 @@ function validateRequiredInputs(
   workDir: string,
   jobResults: Record<string, string>,
   hasPrebuiltFinalOrReport: boolean,
+  upstreamStatuses: readonly StageStatus[] = [],
 ): { ok: true } | { ok: false; missingArtifact: string; failingJob: string } {
   if (hasPrebuiltFinalOrReport) return { ok: true };
 
-  const checks: Array<{ jobs: string[]; artifact: string; files: string[]; validate: (p: string) => boolean }> = [
+  const checks: Array<{
+    jobs: string[];
+    stage?: string;
+    artifact: string;
+    files: string[];
+    validate: (p: string) => boolean;
+  }> = [
     {
       jobs: ["generate"],
+      stage: "generate",
       artifact: ARTIFACTS.proposed.name,
       files: [path.join(workDir, ARTIFACTS.proposed.dir, "proposed.json")],
       validate: (p) => tryReadJsonFile(p, (raw) => ProposedSchema.parse(raw)) !== null,
@@ -151,6 +165,7 @@ function validateRequiredInputs(
     },
     {
       jobs: ["repair"],
+      stage: "repair",
       artifact: ARTIFACTS.repaired.name,
       files: [
         path.join(workDir, ARTIFACTS.repaired.dir, "proposed.repaired.json"),
@@ -175,6 +190,16 @@ function validateRequiredInputs(
   for (const check of checks) {
     const matchedJob = check.jobs.find((j) => jobResults[j] === "success");
     if (!matchedJob) continue;
+    if (check.stage) {
+      const stageStatus = upstreamStatuses.find((s) => s.stage === check.stage);
+      if (stageStatus && (stageStatus.status === "error" || stageStatus.status === "soft_fail")) {
+        return {
+          ok: false,
+          missingArtifact: check.artifact,
+          failingJob: `${matchedJob} (${stageStatus.status}${stageStatus.reason ? `: ${stageStatus.reason}` : ""})`,
+        };
+      }
+    }
     const validFile = check.files.find((f) => check.validate(f));
     if (!validFile) {
       return { ok: false, missingArtifact: check.artifact, failingJob: matchedJob };
@@ -188,13 +213,10 @@ function readSnapshotContent(params: {
   attempt: 1 | 2;
   testPath: string;
   snapshot: Snapshot | null;
-  finalSha256?: string;
 }): { ok: boolean; content: string; reason?: string } {
   const snapDir = params.attempt === 1 ? ARTIFACTS.snapshot1.dir : ARTIFACTS.snapshot2.dir;
   const snapValidatedRoot = path.join(params.workDir, snapDir, "validated");
   const snapFile = path.join(snapValidatedRoot, params.testPath);
-  const finalValidatedRoot = path.join(params.workDir, ARTIFACTS.final.dir, "validated");
-  const finalFallbackFile = path.join(finalValidatedRoot, params.testPath);
 
   if (existsSync(snapFile)) {
     if (!isSafeRealPathInsideRoot(params.testPath, snapValidatedRoot, { requireRegularFileIfExists: true })) {
@@ -203,26 +225,11 @@ function readSnapshotContent(params: {
     const content = readFileSync(snapFile, "utf8");
     const norm = toRepoPathSafe(params.testPath);
     const entry = params.snapshot?.files.find((e) => toRepoPathSafe(e.testPath) === norm);
+    if (!entry) {
+      return { ok: false, content: "", reason: "snapshot_missing" };
+    }
     const actual = sha256Hex(content);
-    if (entry) {
-      if (actual !== entry.sha256) {
-        return { ok: false, content: "", reason: "policy_violation" };
-      }
-      return { ok: true, content };
-    }
-    if (params.finalSha256 && actual === params.finalSha256) {
-      return { ok: true, content };
-    }
-    return { ok: false, content: "", reason: "snapshot_missing" };
-  }
-
-  if (
-    params.finalSha256 &&
-    existsSync(finalFallbackFile) &&
-    isSafeRealPathInsideRoot(params.testPath, finalValidatedRoot, { requireRegularFileIfExists: true })
-  ) {
-    const content = readFileSync(finalFallbackFile, "utf8");
-    if (sha256Hex(content) !== params.finalSha256) {
+    if (actual !== entry.sha256) {
       return { ok: false, content: "", reason: "policy_violation" };
     }
     return { ok: true, content };
@@ -235,6 +242,48 @@ function toRepoPathSafe(p: string): string {
   return p.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
+function mergeValidationReports(params: {
+  report1: ValidationReport | null;
+  report2: ValidationReport | null;
+  mergedReportsByPath?: Map<string, { attempt: 1 | 2; fr: ValidatedFileReport }>;
+  extraNotes?: readonly string[];
+}): ValidationReport {
+  const byPath = params.mergedReportsByPath ?? new Map<string, { attempt: 1 | 2; fr: ValidatedFileReport }>();
+  if (!params.mergedReportsByPath) {
+    for (const fr of params.report1?.files ?? []) {
+      byPath.set(fr.testPath, { attempt: 1, fr });
+    }
+    for (const fr of params.report2?.files ?? []) {
+      byPath.set(fr.testPath, { attempt: 2, fr });
+    }
+  }
+  const latestReport = params.report2 ?? params.report1;
+  if (!latestReport) {
+    throw new StageError(
+      "Validation report not found in validate1/ or validate2/.",
+      EXIT_CODES.CONFIG_OR_INPUT,
+      "publish",
+      "missing_report",
+    );
+  }
+  const p1Before = params.report1?.patchCoverage.beforePct ?? null;
+  const p2Before = params.report2?.patchCoverage.beforePct ?? null;
+  const p1Proj = params.report1?.patchCoverage.projectedPct ?? null;
+  const p2Proj = params.report2?.patchCoverage.projectedPct ?? null;
+  const mergedBeforePct = p1Before ?? p2Before ?? null;
+  const mergedProjectedPct = p1Proj !== null && p2Proj !== null ? Math.max(p1Proj, p2Proj) : (p2Proj ?? p1Proj ?? null);
+
+  return ValidationReportSchema.parse({
+    ...latestReport,
+    patchCoverage: {
+      beforePct: mergedBeforePct,
+      projectedPct: mergedProjectedPct,
+    },
+    files: [...byPath.values()].map((v) => v.fr),
+    notes: [...latestReport.notes, ...(params.extraNotes ?? [])],
+  });
+}
+
 async function assembleFinalFromSnapshots(params: {
   repoRoot: string;
   workDir: string;
@@ -242,6 +291,9 @@ async function assembleFinalFromSnapshots(params: {
   manifest: Manifest | null;
   report1: ValidationReport | null;
   report2: ValidationReport | null;
+  repoFullName?: string;
+  prNumber?: number;
+  headSha?: string;
 }): Promise<{ report: ValidationReport; finalArtifact: Final; notes: string[] }> {
   const notes: string[] = [];
   const snap1 = tryReadJsonFile(path.join(params.workDir, ARTIFACTS.snapshot1.dir, "snapshot.json"), (r) =>
@@ -265,7 +317,20 @@ async function assembleFinalFromSnapshots(params: {
   const seenNormalizedPaths = new Set<string>();
   const manifestById = new Map((params.manifest?.files ?? []).map((m) => [m.fileId, m]));
 
-  for (const { attempt, fr } of mergedReportsByPath.values()) {
+  for (const [key, { attempt, fr }] of [...mergedReportsByPath.entries()]) {
+    const rejectReportFile = (rejectReason: string, displayPath = fr.testPath) => {
+      rejected.push({ testPath: displayPath, reason: rejectReason });
+      mergedReportsByPath.set(key, {
+        attempt,
+        fr: {
+          ...fr,
+          outcome: "rejected",
+          reason: rejectReason as ValidatedFileReport["reason"],
+          sha256: null,
+        },
+      });
+    };
+
     if (fr.outcome !== "accepted" && fr.outcome !== "accepted_pruned") {
       rejected.push({ testPath: fr.testPath, reason: fr.reason ?? fr.outcome });
       continue;
@@ -275,12 +340,12 @@ async function assembleFinalFromSnapshots(params: {
     try {
       normTestPath = toRepoPath(fr.testPath, params.repoRoot);
     } catch {
-      rejected.push({ testPath: fr.testPath, reason: "path_violation" });
+      rejectReportFile("path_violation");
       continue;
     }
 
     if (!checkCommitPath(normTestPath).ok || seenNormalizedPaths.has(normTestPath.toLowerCase())) {
-      rejected.push({ testPath: normTestPath, reason: "path_violation" });
+      rejectReportFile("path_violation", normTestPath);
       continue;
     }
     seenNormalizedPaths.add(normTestPath.toLowerCase());
@@ -290,10 +355,9 @@ async function assembleFinalFromSnapshots(params: {
       attempt,
       testPath: normTestPath,
       snapshot: attempt === 1 ? snap1 : snap2,
-      finalSha256: fr.finalSha256,
     });
     if (!snapRes.ok) {
-      rejected.push({ testPath: normTestPath, reason: snapRes.reason ?? "policy_violation" });
+      rejectReportFile(snapRes.reason ?? "policy_violation", normTestPath);
       continue;
     }
 
@@ -316,13 +380,18 @@ async function assembleFinalFromSnapshots(params: {
         provenanceHeader: params.config.policy.provenanceHeader,
         referenceSourceContent: refSourceContent,
       });
-      if (fr.finalSha256 && sha256Hex(derived.content) !== fr.finalSha256) {
-        rejected.push({ testPath: normTestPath, reason: "policy_violation" });
+      if (!fr.finalSha256 || sha256Hex(derived.content) !== fr.finalSha256) {
+        rejectReportFile("policy_violation", normTestPath);
         continue;
       }
       finalContent = derived.content;
+    } else if (fr.outcome === "accepted_pruned") {
+      if (!fr.finalSha256 || sha256Hex(finalContent) !== fr.finalSha256) {
+        rejectReportFile("policy_violation", normTestPath);
+        continue;
+      }
     } else if (fr.finalSha256 && sha256Hex(finalContent) !== fr.finalSha256) {
-      rejected.push({ testPath: normTestPath, reason: "policy_violation" });
+      rejectReportFile("policy_violation", normTestPath);
       continue;
     }
 
@@ -337,7 +406,7 @@ async function assembleFinalFromSnapshots(params: {
       extraBannedImports: params.config.policy.extraBannedImports,
     });
     if (!policyRes.ok) {
-      rejected.push({ testPath: normTestPath, reason: "policy_violation" });
+      rejectReportFile("policy_violation", normTestPath);
       continue;
     }
 
@@ -355,39 +424,19 @@ async function assembleFinalFromSnapshots(params: {
     });
   }
 
-  const latestReport = params.report2 ?? params.report1;
-  if (!latestReport) {
-    throw new StageError(
-      "Validation report not found in validate1/ or validate2/.",
-      EXIT_CODES.CONFIG_OR_INPUT,
-      "publish",
-      "missing_report",
-    );
-  }
-
-  const p1Before = params.report1?.patchCoverage.beforePct ?? null;
-  const p2Before = params.report2?.patchCoverage.beforePct ?? null;
-  const p1Proj = params.report1?.patchCoverage.projectedPct ?? null;
-  const p2Proj = params.report2?.patchCoverage.projectedPct ?? null;
-  const mergedBeforePct = p1Before ?? p2Before ?? null;
-  const mergedProjectedPct = p1Proj !== null && p2Proj !== null ? Math.max(p1Proj, p2Proj) : (p2Proj ?? p1Proj ?? null);
-
-  const mergedReport = ValidationReportSchema.parse({
-    ...latestReport,
-    patchCoverage: {
-      beforePct: mergedBeforePct,
-      projectedPct: mergedProjectedPct,
-    },
-    files: [...mergedReportsByPath.values()].map((v) => v.fr),
-    notes: [...latestReport.notes, ...notes],
+  const mergedReport = mergeValidationReports({
+    report1: params.report1,
+    report2: params.report2,
+    mergedReportsByPath,
+    extraNotes: notes,
   });
 
   const finalArtifact = FinalSchema.parse({
     schemaVersion: 1,
     runId: params.manifest?.runId || process.env.GITHUB_RUN_ID || "local-run",
-    repo: params.manifest?.repo || process.env.GITHUB_REPOSITORY || "unknown/unknown",
-    pr: params.manifest?.pr ?? 0,
-    headSha: params.manifest?.headSha ?? snap1?.headSha ?? snap2?.headSha ?? "unknown",
+    repo: params.manifest?.repo || params.repoFullName || process.env.GITHUB_REPOSITORY || "unknown/unknown",
+    pr: params.manifest?.pr ?? params.prNumber ?? 0,
+    headSha: params.manifest?.headSha ?? params.headSha ?? snap1?.headSha ?? snap2?.headSha ?? "unknown",
     headRef: process.env.GITHUB_HEAD_REF || "HEAD",
     mode: params.config.mode,
     files: finalFiles,
@@ -562,12 +611,6 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       fallbackDirs: [path.join(opts.workDir, ARTIFACTS.prepare.dir), path.join(opts.workDir, ARTIFACTS.final.dir)],
     });
   const isNoticeOnly = !hasValidationOutputs && existsSync(prepareNoticePath);
-  if (!config && !isNoticeOnly) {
-    config = loadConfig(opts.repoRoot, opts.configPath).config;
-  }
-  const targetPct = config?.targets.patchCoverage ?? 80;
-  const envName = opts.approvalEnvironment ?? process.env.UA_APPROVAL_ENV ?? APPROVE_ENV_NAME;
-  const checkMode = (opts.approvalCheck ?? process.env.UA_APPROVAL_CHECK ?? "api") as "api" | "manual";
 
   const jobResults = opts.jobResults ?? parseJobResultsEnv(process.env.UA_JOB_RESULTS);
   const failedUpstreamJobs = Object.entries(jobResults)
@@ -575,20 +618,29 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     .map(([name, result]) => `${name}=${result}`);
 
   const upstreamStatuses = readUpstreamStatuses(opts.workDir);
+  const hasUpstreamFailure =
+    !hasValidationOutputs && (failedUpstreamJobs.length > 0 || upstreamStatuses.some((s) => s.status !== "ok"));
+  if (!config && !isNoticeOnly && !hasUpstreamFailure) {
+    config = loadConfig(opts.repoRoot, opts.configPath).config;
+  }
+  const targetPct = config?.targets.patchCoverage ?? 80;
+  const envName = opts.approvalEnvironment ?? process.env.UA_APPROVAL_ENV ?? APPROVE_ENV_NAME;
+  const checkMode = (opts.approvalCheck ?? process.env.UA_APPROVAL_CHECK ?? "api") as "api" | "manual";
   const manifest = tryReadJsonFile(path.join(opts.workDir, ARTIFACTS.prepare.dir, "manifest.json"), (r) =>
     ManifestSchema.parse(r),
   );
 
-  // Notice-only branch when prepare produced notice without validation outputs
-
-  const reqCheck = validateRequiredInputs(opts.workDir, jobResults, Boolean(opts.report && opts.finalArtifact));
-  if (!reqCheck.ok) {
+  const emitIncompletePublishResult = async (params: {
+    failLines: string[];
+    softReason: string;
+    noteSummary: string;
+  }) => {
     const repoStr = opts.repoFullName || manifest?.repo || process.env.GITHUB_REPOSITORY || "unknown/unknown";
     const prNum = opts.prNumber ?? manifest?.pr ?? 0;
     const headSha = opts.headSha ?? manifest?.headSha ?? "unknown";
-    const failMsg = `\`${reqCheck.missingArtifact}\` was expected from \`${reqCheck.failingJob}\` but was missing or invalid; check the \`${reqCheck.failingJob}\` job logs.`;
+    const bodyLines = params.failLines.map((l) => `> ${l}`).join("\n");
     const markdown = truncateCommentMarkdown(
-      `${buildCommentMarker(headSha)}\n## unit-agent: incomplete run\n\n> [!WARNING]\n> ${failMsg}\n`,
+      `${buildCommentMarker(headSha)}\n## unit-agent: incomplete run\n\n> [!WARNING]\n${bodyLines}\n`,
     );
     writeStepSummary(markdown);
 
@@ -600,7 +652,6 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       }
     }
 
-    const softReason = `missing_required_input:${reqCheck.missingArtifact}`;
     const emptyFinal = FinalSchema.parse({
       schemaVersion: 1,
       runId: manifest?.runId || process.env.GITHUB_RUN_ID || "unknown",
@@ -611,13 +662,13 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       mode: "report",
       files: [],
       patchCoverage: { beforePct: null, projectedPct: null, targetPct },
-      toolVersions: { agentNode: process.versions.node, languages: {}, warnings: [failMsg] },
-      notes: [failMsg],
+      toolVersions: { agentNode: process.versions.node, languages: {}, warnings: [params.noteSummary] },
+      notes: [params.noteSummary],
       rejected: [],
     });
     mkdirSync(path.dirname(finalFile), { recursive: true });
     writeFileSync(finalFile, `${JSON.stringify(emptyFinal, null, 2)}\n`, "utf8");
-    writeStageStatus(opts.workDir, { stage: "publish", status: "soft_fail", reason: softReason, code: 20 });
+    writeStageStatus(opts.workDir, { stage: "publish", status: "soft_fail", reason: params.softReason, code: 20 });
     if (opts.writeOutputs !== false) {
       writeGitHubOutput({
         effective_mode: "report",
@@ -628,6 +679,23 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       });
     }
     return { finalArtifact: emptyFinal, markdown, commentId };
+  };
+
+  // Notice-only branch when prepare produced notice without validation outputs
+
+  const reqCheck = validateRequiredInputs(
+    opts.workDir,
+    jobResults,
+    Boolean(opts.report && opts.finalArtifact),
+    upstreamStatuses,
+  );
+  if (!reqCheck.ok) {
+    const failMsg = `\`${reqCheck.missingArtifact}\` was expected from \`${reqCheck.failingJob}\` but was missing or invalid; check the \`${reqCheck.failingJob}\` job logs.`;
+    return emitIncompletePublishResult({
+      failLines: [failMsg],
+      softReason: `missing_required_input:${reqCheck.missingArtifact}`,
+      noteSummary: failMsg,
+    });
   }
 
   if (!hasValidationOutputs && existsSync(prepareNoticePath)) {
@@ -673,6 +741,28 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
     return { finalArtifact: noticeFinal, markdown, commentId };
   }
 
+  if (hasUpstreamFailure) {
+    const detailLines: string[] = [];
+    if (failedUpstreamJobs.length > 0) {
+      detailLines.push(`Upstream job(s) did not succeed: ${sanitizeForMarkdown(failedUpstreamJobs.join(", "), 240)}.`);
+    }
+    for (const st of upstreamStatuses) {
+      if (st.status !== "ok") {
+        detailLines.push(
+          `**${sanitizeForMarkdown(st.stage, 40)}** (\`${sanitizeForMarkdown(st.status, 40)}\`): ${sanitizeForMarkdown(st.reason ?? "failed", 240)}`,
+        );
+      }
+    }
+    if (detailLines.length === 0) {
+      detailLines.push("Upstream stage failed before producing validation outputs.");
+    }
+    return emitIncompletePublishResult({
+      failLines: detailLines,
+      softReason: "upstream_job_failed",
+      noteSummary: detailLines.join(" | "),
+    });
+  }
+
   const activeConfig = config ?? loadConfig(opts.repoRoot, opts.configPath).config;
   let report = opts.report;
   let finalArtifact = opts.finalArtifact;
@@ -688,9 +778,16 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
       manifest,
       report1: r1,
       report2: r2,
+      repoFullName: opts.repoFullName,
+      prNumber: opts.prNumber,
+      headSha: opts.headSha,
     });
     report = report ?? assembled.report;
     finalArtifact = assembled.finalArtifact;
+  }
+
+  if (!report && !opts.reportPath && r1 && r2) {
+    report = mergeValidationReports({ report1: r1, report2: r2 });
   }
 
   if (!report) {
@@ -729,8 +826,14 @@ export async function runPublish(opts: RunPublishOptions): Promise<{
         "No GitHub API client available to verify the approval environment; downgrading mode from propose to report.";
       opts.logger?.warn({ envName }, approvalWarning);
     } else {
-      const [owner = "", repo = ""] = finalArtifact.repo.split("/");
-      if (owner && repo) {
+      const repoSegments = finalArtifact.repo.split("/");
+      const owner = repoSegments[0] ?? "";
+      const repo = repoSegments[1] ?? "";
+      if (repoSegments.length !== 2 || !owner || !repo) {
+        effectiveMode = "report";
+        approvalWarning = `Invalid repository identifier "${finalArtifact.repo}"; downgrading mode from propose to report.`;
+        opts.logger?.warn({ repo: finalArtifact.repo }, approvalWarning);
+      } else {
         const envRes = await verifyApprovalEnvironment({
           github: opts.github,
           owner,

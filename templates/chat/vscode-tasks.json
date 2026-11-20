@@ -4,43 +4,50 @@
     {
       "label": "unit-agent: config check",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js config check",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "config", "check"],
       "problemMatcher": []
     },
     {
       "label": "unit-agent: doctor",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local doctor --full",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "local", "doctor", "--full"],
       "problemMatcher": []
     },
     {
       "label": "unit-agent: detect",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local detect --scope ${input:unitAgentScope}",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "local", "detect", "--scope", "${input:unitAgentScope}"],
       "problemMatcher": []
     },
     {
       "label": "unit-agent: validate",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local validate",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "local", "validate"],
       "problemMatcher": []
     },
     {
       "label": "unit-agent: apply (dry run)",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local apply",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "local", "apply"],
       "problemMatcher": []
     },
     {
       "label": "unit-agent: apply (write files)",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local apply --confirm",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "local", "apply", "--confirm"],
       "problemMatcher": []
     },
     {
       "label": "unit-agent: status",
       "type": "shell",
-      "command": "{{nodeCommand}} .unit-agent/bin/cli.js local status",
+      "command": "{{rawNodeCommand}}",
+      "args": ["{{cliEntry}}", "local", "status"],
       "problemMatcher": []
     }
   ],

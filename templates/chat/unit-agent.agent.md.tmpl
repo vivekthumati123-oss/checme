@@ -34,6 +34,6 @@ You write unit tests with the help of the `unit-agent` command line tool. The to
 
 ## Output contract
 - **Automation:** if the task contains `"mode": "automation"`, return only JSON:
-  `{ "tests": [{ "path": "...", "content": "..." }], "summary": "..." }`
+  `{ "files": [{ "path": "...", "content": "...", "sourcePath": "...", "casesGenerated": 1 }], "summary": "...", "framework": "..." }`
 - **Chat:** otherwise, in `"mode": "interactive"` or VS Code Chat, follow the staged workflow above, present the validation summary table, and apply validated tests only after explicit user confirmation.
 
