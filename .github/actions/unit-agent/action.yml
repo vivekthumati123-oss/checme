@@ -103,4 +103,4 @@ runs:
         fi
         set -f
         read -r -a EXTRA_ARGS <<< "$UA_ARGS"
-        "${UA_NODE:-node}" --throw-deprecation "$ACTION_ROOT/dist/cli.js" "$UA_COMMAND" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+        "${UA_NODE:-node}" --throw-deprecation "$ACTION_ROOT/agents/node/testgen/dist/cli.js" "$UA_COMMAND" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

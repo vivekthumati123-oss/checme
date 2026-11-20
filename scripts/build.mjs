@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
+const TESTGEN_ROOT = path.join(ROOT, "agents", "node", "testgen");
 
 const WASM_FILES = [
   {
@@ -19,12 +20,12 @@ const WASM_FILES = [
 ];
 
 async function main() {
-  const distDir = path.join(ROOT, "dist");
+  const distDir = path.join(TESTGEN_ROOT, "dist");
   const wasmDir = path.join(distDir, "wasm");
   mkdirSync(wasmDir, { recursive: true });
 
   await build({
-    entryPoints: [path.join(ROOT, "src", "cli.ts")],
+    entryPoints: [path.join(TESTGEN_ROOT, "src", "cli.ts")],
     outfile: path.join(distDir, "cli.js"),
     bundle: true,
     platform: "node",
@@ -52,17 +53,17 @@ async function main() {
     cpSync(item.src, path.join(wasmDir, item.name));
   }
 
-  const jacocoSrc = path.join(ROOT, "src", "stages", "validate", "runners", "java", "jacoco-init.gradle");
+  const jacocoSrc = path.join(TESTGEN_ROOT, "src", "stages", "validate", "runners", "java", "jacoco-init.gradle");
   if (existsSync(jacocoSrc)) {
     cpSync(jacocoSrc, path.join(distDir, "unit-agent-jacoco.init.gradle"));
   }
 
-  const promptsSrc = path.join(ROOT, "src", "llm", "prompts");
+  const promptsSrc = path.join(TESTGEN_ROOT, "src", "llm", "prompts");
   if (existsSync(promptsSrc)) {
     cpSync(promptsSrc, path.join(distDir, "prompts"), { recursive: true });
   }
 
-  const chatTemplatesSrc = path.join(ROOT, "templates", "chat");
+  const chatTemplatesSrc = path.join(TESTGEN_ROOT, "templates", "chat");
   if (existsSync(chatTemplatesSrc)) {
     cpSync(chatTemplatesSrc, path.join(distDir, "templates", "chat"), { recursive: true });
   }
@@ -76,7 +77,7 @@ async function main() {
 
   // Generate schema/unit-agent.schema.json directly from ConfigSchema without needing tsx at runtime
   const schemaBuild = await build({
-    entryPoints: [path.join(ROOT, "src", "contracts", "config.ts")],
+    entryPoints: [path.join(TESTGEN_ROOT, "src", "contracts", "config.ts")],
     bundle: true,
     platform: "node",
     target: "node20",
@@ -96,7 +97,7 @@ async function main() {
       title: "Unit Agent Configuration (.unit-agent.yml)",
       ...mod.exportConfigJsonSchema(),
     };
-    const schemaDir = path.join(ROOT, "schema");
+    const schemaDir = path.join(TESTGEN_ROOT, "schema");
     mkdirSync(schemaDir, { recursive: true });
     writeFileSync(path.join(schemaDir, "unit-agent.schema.json"), `${JSON.stringify(jsonSchema, null, 2)}\n`, "utf8");
   } finally {

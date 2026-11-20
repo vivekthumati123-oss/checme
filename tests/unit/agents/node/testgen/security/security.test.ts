@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
-import { tokenizeCommand } from "../../src/config";
+import { tokenizeCommand } from "../../../../../../agents/node/testgen/src/config";
 import {
   ARTIFACTS,
   ConfigSchema,
@@ -15,25 +15,28 @@ import {
   ProposedSchema,
   StageError,
   type GitHubClientLike,
-} from "../../src/contracts";
-import { sha256Hex } from "../../src/core/context";
-import { parseUnifiedDiff } from "../../src/core/git";
-import { toRepoPath } from "../../src/core/paths";
-import { runStaticPolicyCheck } from "../../src/core/policy";
-import { buildChildEnv, runCommand } from "../../src/exec/exec";
-import { resolveGitHubTokensFromEnv } from "../../src/github";
-import { FakeLlmClient } from "../../src/llm/fake-client";
-import { runLocalApply } from "../../src/local/apply";
-import { cleanupLeftoverPlacedFiles, recordPlacedFile } from "../../src/local/placement";
-import { runLocalValidate } from "../../src/local/validate";
-import { runCommit } from "../../src/stages/commit";
-import { runGenerate } from "../../src/stages/generate";
-import { runPublish } from "../../src/stages/publish";
-import { runValidate } from "../../src/stages/validate";
-import { prepareValidationWorkspace } from "../../src/stages/validate/workspace";
-import { sanitizeForMarkdown, sanitizeOutput } from "../../src/telemetry";
+} from "../../../../../../agents/node/testgen/src/contracts";
+import { sha256Hex } from "../../../../../../agents/node/testgen/src/core/context";
+import { parseUnifiedDiff } from "../../../../../../agents/node/testgen/src/core/git";
+import { toRepoPath } from "../../../../../../agents/node/testgen/src/core/paths";
+import { runStaticPolicyCheck } from "../../../../../../agents/node/testgen/src/core/policy";
+import { buildChildEnv, runCommand } from "../../../../../../agents/node/testgen/src/exec/exec";
+import { resolveGitHubTokensFromEnv } from "../../../../../../agents/node/testgen/src/github";
+import { FakeLlmClient } from "../../../../../../agents/node/testgen/src/llm/fake-client";
+import { runLocalApply } from "../../../../../../agents/node/testgen/src/local/apply";
+import {
+  cleanupLeftoverPlacedFiles,
+  recordPlacedFile,
+} from "../../../../../../agents/node/testgen/src/local/placement";
+import { runLocalValidate } from "../../../../../../agents/node/testgen/src/local/validate";
+import { runCommit } from "../../../../../../agents/node/testgen/src/stages/commit";
+import { runGenerate } from "../../../../../../agents/node/testgen/src/stages/generate";
+import { runPublish } from "../../../../../../agents/node/testgen/src/stages/publish";
+import { runValidate } from "../../../../../../agents/node/testgen/src/stages/validate";
+import { prepareValidationWorkspace } from "../../../../../../agents/node/testgen/src/stages/validate/workspace";
+import { sanitizeForMarkdown, sanitizeOutput } from "../../../../../../agents/node/testgen/src/telemetry";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -381,7 +384,9 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
 
     const workDir = path.join(repo, ".unit-agent");
     const cfg = ConfigSchema.parse(
-      parseYaml(readFileSync(path.join(REPO_ROOT, "fixtures/repos/js-vitest/.unit-agent.yml"), "utf8")),
+      parseYaml(
+        readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/repos/js-vitest/.unit-agent.yml"), "utf8"),
+      ),
     );
     const manifest = ManifestSchema.parse({
       schemaVersion: 1,
@@ -545,8 +550,8 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
   });
 
   it("7. permissions-audit enforces strict workflow trust boundaries in run.yml and validate.yml", () => {
-    const runRaw = readFileSync(path.join(REPO_ROOT, ".github/workflows/run.yml"), "utf8");
-    const valRaw = readFileSync(path.join(REPO_ROOT, ".github/workflows/validate.yml"), "utf8");
+    const runRaw = readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-run.yml"), "utf8");
+    const valRaw = readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-validate.yml"), "utf8");
     const runDoc = parseYaml(runRaw) as {
       permissions?: Record<string, string>;
       jobs: Record<
@@ -602,7 +607,7 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
     expect(() => tokenizeCommand("pytest; rm -rf /")).toThrow();
 
     // --throw-deprecation cleanly executes dist/cli.js --help if built
-    const distCli = path.join(REPO_ROOT, "dist/cli.js");
+    const distCli = path.join(REPO_ROOT, "agents/node/testgen/dist/cli.js");
     if (existsSync(distCli)) {
       const cliHelp = await runCommand(process.execPath, ["--throw-deprecation", distCli, "--help"], { cwd: dir });
       expect(cliHelp.exitCode).toBe(0);
@@ -783,7 +788,9 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
       "utf8",
     );
 
-    const canaryClient = await FakeLlmClient.fromScriptPath(path.join(REPO_ROOT, "fixtures/llm/canary.js"));
+    const canaryClient = await FakeLlmClient.fromScriptPath(
+      path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/canary.js"),
+    );
     const proposed = await runGenerate({
       repoRoot: repo,
       workDir,

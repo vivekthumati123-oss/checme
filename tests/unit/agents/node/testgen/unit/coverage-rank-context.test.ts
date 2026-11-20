@@ -3,18 +3,23 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema } from "../../src/contracts";
-import { buildFileContextPacket, checkNeverSend, computeImportHint, resolvePythonRoots } from "../../src/core/context";
+import { ConfigSchema } from "../../../../../../agents/node/testgen/src/contracts";
+import {
+  buildFileContextPacket,
+  checkNeverSend,
+  computeImportHint,
+  resolvePythonRoots,
+} from "../../../../../../agents/node/testgen/src/core/context";
 import {
   computePatchCoverage,
   mapSymbolsToCoverage,
   normalizeCoverageContent,
   parseCoverageFile,
-} from "../../src/core/coverage";
-import { parseSourceFile } from "../../src/core/parse";
-import { trimContextForMaxChars } from "../../src/local/show";
-import { normalizeSummaryPaths } from "../../src/local/summaries";
-import { rankAndSelectSymbols } from "../../src/core/rank";
+} from "../../../../../../agents/node/testgen/src/core/coverage";
+import { parseSourceFile } from "../../../../../../agents/node/testgen/src/core/parse";
+import { trimContextForMaxChars } from "../../../../../../agents/node/testgen/src/local/show";
+import { normalizeSummaryPaths } from "../../../../../../agents/node/testgen/src/local/summaries";
+import { rankAndSelectSymbols } from "../../../../../../agents/node/testgen/src/core/rank";
 
 const tempDirs: string[] = [];
 

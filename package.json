@@ -5,7 +5,7 @@
   "type": "module",
   "description": "L2 programmatic extensions of GitHub Copilot custom agents, with GitHub Issues, Jira and Azure DevOps integration and an internal plugin marketplace",
   "bin": {
-    "unit-agent": "./dist/cli.js"
+    "unit-agent": "./agents/node/testgen/dist/cli.js"
   },
   "workspaces": ["packages/node/*", "agents/node/*"],
   "scripts": {
@@ -20,10 +20,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "test:unit": "vitest run test/unit test/golden",
-    "test:integration": "vitest run test/integration",
-    "test:security": "node --throw-deprecation ./node_modules/vitest/vitest.mjs run test/security",
-    "test:contract": "vitest run test/contract",
+    "test:unit": "vitest run tests/unit/agents/node/testgen/unit tests/unit/agents/node/testgen/golden",
+    "test:integration": "vitest run tests/unit/agents/node/testgen/integration",
+    "test:security": "node --throw-deprecation ./node_modules/vitest/vitest.mjs run tests/unit/agents/node/testgen/security",
+    "test:contract": "vitest run tests/unit/agents/node/testgen/contract",
     "test:l2": "node --test \"tests/node/**/*.test.js\" \"tests/unit/**/*.test.js\" \"tests/unit/.github/**/*.test.js\"",
     "test:architectconnect": "node --test \"tests/unit/agents/node/architectconnect/**/*.test.js\" tests/node/architectconnect.integration.test.js",
     "eval": "node scripts/eval.js",

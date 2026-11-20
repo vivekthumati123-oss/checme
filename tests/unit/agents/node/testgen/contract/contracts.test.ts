@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
-import { runConfigCheck } from "../../src/config/check";
-import { ARTIFACTS, ConfigSchema, exportConfigJsonSchema } from "../../src/contracts";
-import { APPROVE_ENV_NAME } from "../../src/stages/publish";
+import { runConfigCheck } from "../../../../../../agents/node/testgen/src/config/check";
+import { ARTIFACTS, ConfigSchema, exportConfigJsonSchema } from "../../../../../../agents/node/testgen/src/contracts";
+import { APPROVE_ENV_NAME } from "../../../../../../agents/node/testgen/src/stages/publish";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
 
 function collectFilesRecursive(dir: string, exts: readonly string[]): string[] {
   const out: string[] = [];
@@ -28,8 +28,8 @@ function collectFilesRecursive(dir: string, exts: readonly string[]): string[] {
 
 describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
   it("keeps workflow artifact names and stage folders aligned with ARTIFACTS contract", () => {
-    const runYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/run.yml"), "utf8");
-    const validateYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/validate.yml"), "utf8");
+    const runYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-run.yml"), "utf8");
+    const validateYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-validate.yml"), "utf8");
     const combined = `${runYml}\n${validateYml}`;
 
     for (const key of Object.keys(ARTIFACTS) as Array<keyof typeof ARTIFACTS>) {
@@ -44,10 +44,10 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
   });
 
   it("wraps every CLI step with ${UA_NODE:-node} and enforces Node 20 target", () => {
-    const cliAction = readFileSync(path.join(REPO_ROOT, ".github/actions/cli/action.yml"), "utf8");
+    const cliAction = readFileSync(path.join(REPO_ROOT, ".github/actions/unit-agent/action.yml"), "utf8");
     expect(cliAction).toContain('"${UA_NODE:-node}"');
     expect(cliAction).toContain("--throw-deprecation");
-    expect(cliAction).toContain("dist/cli.js");
+    expect(cliAction).toContain("agents/node/testgen/dist/cli.js");
 
     const cliDoc = parseYaml(cliAction) as { outputs?: Record<string, { value?: string }> };
     for (const requiredOut of [
@@ -66,18 +66,18 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
     const buildScript = readFileSync(path.join(REPO_ROOT, "scripts/build.mjs"), "utf8");
     expect(buildScript).toContain("node20");
 
-    const distCli = path.join(REPO_ROOT, "dist/cli.js");
+    const distCli = path.join(REPO_ROOT, "agents/node/testgen/dist/cli.js");
     if (existsSync(distCli)) {
       const content = readFileSync(distCli, "utf8");
       expect(content.length).toBeGreaterThan(1000);
-      expect(existsSync(path.join(REPO_ROOT, "dist/wasm/tree-sitter.wasm"))).toBe(true);
+      expect(existsSync(path.join(REPO_ROOT, "agents/node/testgen/dist/wasm/tree-sitter.wasm"))).toBe(true);
     }
   });
 
   it("keeps approval environment name unit-agent-approval consistent across code, workflows, and docs", () => {
     expect(APPROVE_ENV_NAME).toBe("unit-agent-approval");
     const unitAgentYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/unit-agent.yml"), "utf8");
-    const runYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/run.yml"), "utf8");
+    const runYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-run.yml"), "utf8");
     const setupDoc = readFileSync(path.join(REPO_ROOT, "docs/setup.md"), "utf8");
     const approverDoc = readFileSync(path.join(REPO_ROOT, "docs/approver-guide.md"), "utf8");
 
@@ -89,7 +89,9 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
   });
 
   it("matches docs/supported-versions.md tested tier 1:1 with .github/workflows/matrix.yml", () => {
-    const matrixDoc = parseYaml(readFileSync(path.join(REPO_ROOT, ".github/workflows/matrix.yml"), "utf8")) as {
+    const matrixDoc = parseYaml(
+      readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-matrix.yml"), "utf8"),
+    ) as {
       jobs: {
         "node-matrix": { strategy: { matrix: { os: string[]; "node-version": string[] } } };
         "python-matrix": { strategy: { matrix: { os: string[]; "python-version": string[] } } };
@@ -120,12 +122,12 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
 
   it("keeps schema/unit-agent.schema.json in sync with ConfigSchema and validates every fixture repo config", () => {
     const schemaOnDisk = JSON.parse(
-      readFileSync(path.join(REPO_ROOT, "schema/unit-agent.schema.json"), "utf8"),
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/schema/unit-agent.schema.json"), "utf8"),
     ) as Record<string, unknown>;
     const exported = exportConfigJsonSchema();
     expect(schemaOnDisk.properties).toEqual(exported.properties);
 
-    const reposDir = path.join(REPO_ROOT, "fixtures/repos");
+    const reposDir = path.join(REPO_ROOT, "agents/node/testgen/fixtures/repos");
     const repoNames = readdirSync(reposDir);
     expect(repoNames.length).toBeGreaterThanOrEqual(8);
     for (const name of repoNames) {
@@ -138,7 +140,7 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
   });
 
   it("enforces static banned-pattern invariants across src/, templates/, and unit-agent workflows", () => {
-    const srcFiles = collectFilesRecursive(path.join(REPO_ROOT, "src"), [".ts"]);
+    const srcFiles = collectFilesRecursive(path.join(REPO_ROOT, "agents/node/testgen/src"), [".ts"]);
     expect(srcFiles.length).toBeGreaterThan(20);
 
     for (const file of srcFiles) {
@@ -149,7 +151,7 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
       expect(text, `HEAD~1 forbidden in ${rel}`).not.toContain("HEAD~1");
 
       // Rule: child_process / execa only imported in src/exec/exec.ts
-      if (rel !== "src/exec/exec.ts") {
+      if (rel !== "agents/node/testgen/src/exec/exec.ts") {
         expect(text, `child_process forbidden outside src/exec/exec.ts (${rel})`).not.toMatch(
           /from\s+["'](?:node:)?child_process["']/,
         );
@@ -157,14 +159,14 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
       }
 
       // Rule: src/core free of GITHUB_* and process.env.GITHUB
-      if (rel.startsWith("src/core/")) {
+      if (rel.startsWith("agents/node/testgen/src/core/")) {
         expect(text, `GITHUB_ env forbidden in src/core (${rel})`).not.toMatch(/process\.env\.GITHUB/);
         expect(text, `GITHUB_* reference forbidden in src/core (${rel})`).not.toContain("GITHUB_TOKEN");
         expect(text, `GITHUB_* reference forbidden in src/core (${rel})`).not.toContain("GITHUB_OUTPUT");
       }
 
       // Rule: git diff invoked only inside src/core/git/range.ts and src/core/git/diff.ts
-      if (rel !== "src/core/git/range.ts" && rel !== "src/core/git/diff.ts") {
+      if (rel !== "agents/node/testgen/src/core/git/range.ts" && rel !== "agents/node/testgen/src/core/git/diff.ts") {
         expect(text, `git diff invocation forbidden in ${rel}`).not.toMatch(
           /runCommand\s*\(\s*["']git["']\s*,\s*\[\s*["']diff["']/,
         );
@@ -172,7 +174,11 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
     }
 
     // Rule: no mcp-servers anywhere in templates or unit-agent agent definition
-    const tmplFiles = collectFilesRecursive(path.join(REPO_ROOT, "templates/chat"), [".md", ".tmpl", ".json"]);
+    const tmplFiles = collectFilesRecursive(path.join(REPO_ROOT, "agents/node/testgen/templates/chat"), [
+      ".md",
+      ".tmpl",
+      ".json",
+    ]);
     for (const tf of [...tmplFiles, path.join(REPO_ROOT, ".github/agents/unit-agent.agent.md")]) {
       expect(readFileSync(tf, "utf8")).not.toContain("mcp-servers");
     }
@@ -180,12 +186,12 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
     // Rule: no ${{ github.event.* }} directly interpolated inside bash/pwsh run: blocks in unit-agent workflows
     for (const wfName of [
       "unit-agent.yml",
-      "run.yml",
-      "validate.yml",
+      "_testgen-run.yml",
+      "_testgen-validate.yml",
       "ci.yml",
-      "matrix.yml",
+      "_testgen-matrix.yml",
       "release.yml",
-      "e2e.yml",
+      "_testgen-e2e.yml",
     ]) {
       const wf = parseYaml(readFileSync(path.join(REPO_ROOT, ".github/workflows", wfName), "utf8")) as {
         jobs?: Record<string, { steps?: Array<{ run?: string }> }>;

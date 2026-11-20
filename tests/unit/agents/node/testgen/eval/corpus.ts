@@ -1,4 +1,4 @@
-import type { LanguageKey } from "../../src/contracts";
+import type { LanguageKey } from "../../../../../../agents/node/testgen/src/contracts";
 
 export interface EvalCase {
   id: string;
@@ -23,11 +23,11 @@ const jsCases: EvalCase[] = Array.from({ length: 10 }, (_, idx) => {
     sourcePath: `src/eval/jsMetric${n}.ts`,
     testPath: `test/eval/jsMetric${n}.test.ts`,
     symbolName: fnName,
-    importHint: `import { ${fnName} } from "../../src/eval/jsMetric${n}";`,
+    importHint: `import { ${fnName} } from "../../../../../../agents/node/testgen/src/eval/jsMetric${n}";`,
     expectedGatePass: true,
     sampleTestContent: [
       'import { expect, it, vi } from "vitest";',
-      `import { ${fnName} } from "../../src/eval/jsMetric${n}";`,
+      `import { ${fnName} } from "../../../../../../agents/node/testgen/src/eval/jsMetric${n}";`,
       "",
       `it("${fnName} handles normal inputs", () => {`,
       `  const spy = vi.fn(() => ${n});`,

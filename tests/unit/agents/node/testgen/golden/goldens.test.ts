@@ -5,18 +5,18 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
-import { ConfigSchema } from "../../src/contracts";
-import { normalizeCoverageContent } from "../../src/core/coverage";
-import { parseUnifiedDiff } from "../../src/core/git";
-import { parseSourceFile } from "../../src/core/parse";
-import { buildLanguageToolVersions } from "../../src/languages/toolchains";
-import { extractTestRulesBlock, renderGenerationPrompt } from "../../src/llm";
-import { runInitChat } from "../../src/local/init-chat";
-import { renderPublishSummaryMarkdown } from "../../src/stages/publish";
-import { classifyExecutionFailure } from "../../src/stages/validate/classify";
-import { sanitizeOutput } from "../../src/telemetry";
+import { ConfigSchema } from "../../../../../../agents/node/testgen/src/contracts";
+import { normalizeCoverageContent } from "../../../../../../agents/node/testgen/src/core/coverage";
+import { parseUnifiedDiff } from "../../../../../../agents/node/testgen/src/core/git";
+import { parseSourceFile } from "../../../../../../agents/node/testgen/src/core/parse";
+import { buildLanguageToolVersions } from "../../../../../../agents/node/testgen/src/languages/toolchains";
+import { extractTestRulesBlock, renderGenerationPrompt } from "../../../../../../agents/node/testgen/src/llm";
+import { runInitChat } from "../../../../../../agents/node/testgen/src/local/init-chat";
+import { renderPublishSummaryMarkdown } from "../../../../../../agents/node/testgen/src/stages/publish";
+import { classifyExecutionFailure } from "../../../../../../agents/node/testgen/src/stages/validate/classify";
+import { sanitizeOutput } from "../../../../../../agents/node/testgen/src/telemetry";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -36,37 +36,47 @@ afterEach(() => {
 
 describe("Golden suite (Step 10.2 / fixtures)", () => {
   it("parses every diff fixture cleanly including pure deletion, binary, submodule, and renames", () => {
-    const simpleAdd = parseUnifiedDiff(readFileSync(path.join(REPO_ROOT, "fixtures/diffs/simple-add.diff"), "utf8"));
+    const simpleAdd = parseUnifiedDiff(
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/simple-add.diff"), "utf8"),
+    );
     expect(simpleAdd["src/math.ts"]).toEqual([1, 2, 3, 4, 5]);
 
     const modifyLines = parseUnifiedDiff(
-      readFileSync(path.join(REPO_ROOT, "fixtures/diffs/modify-lines.diff"), "utf8"),
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/modify-lines.diff"), "utf8"),
     );
     expect(modifyLines["src/calc.ts"]).toEqual([11, 12, 13, 21, 22]);
 
     const renameEdit = parseUnifiedDiff(
-      readFileSync(path.join(REPO_ROOT, "fixtures/diffs/rename-with-edit.diff"), "utf8"),
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/rename-with-edit.diff"), "utf8"),
     );
     expect(renameEdit["src/oldName.ts"]).toBeUndefined();
     expect(renameEdit["src/newName.ts"]).toEqual([4, 5, 6]);
 
-    const deleteOnly = parseUnifiedDiff(readFileSync(path.join(REPO_ROOT, "fixtures/diffs/delete-only.diff"), "utf8"));
+    const deleteOnly = parseUnifiedDiff(
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/delete-only.diff"), "utf8"),
+    );
     expect(deleteOnly["src/obsolete.ts"]).toBeUndefined();
     expect(deleteOnly["src/calc.ts"] ?? []).toEqual([]);
 
     const binaryText = parseUnifiedDiff(
-      readFileSync(path.join(REPO_ROOT, "fixtures/diffs/binary-and-text.diff"), "utf8"),
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/binary-and-text.diff"), "utf8"),
     );
     expect(binaryText["assets/logo.png"]).toBeUndefined();
     expect(binaryText["src/formatter.ts"]).toEqual([3, 4]);
 
-    const submod = parseUnifiedDiff(readFileSync(path.join(REPO_ROOT, "fixtures/diffs/submodule-change.diff"), "utf8"));
+    const submod = parseUnifiedDiff(
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/submodule-change.diff"), "utf8"),
+    );
     expect(submod["src/service.ts"]).toEqual([9, 10]);
 
-    const crlf = parseUnifiedDiff(readFileSync(path.join(REPO_ROOT, "fixtures/diffs/crlf-file.diff"), "utf8"));
+    const crlf = parseUnifiedDiff(
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/crlf-file.diff"), "utf8"),
+    );
     expect(crlf["src/crlf.ts"]).toEqual([2, 3, 4]);
 
-    const huge = parseUnifiedDiff(readFileSync(path.join(REPO_ROOT, "fixtures/diffs/huge-generated.diff"), "utf8"));
+    const huge = parseUnifiedDiff(
+      readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/diffs/huge-generated.diff"), "utf8"),
+    );
     expect(huge["dist/generated.bundle.js"]?.length).toBe(200);
     expect(huge["src/kept.ts"]).toEqual([2, 3]);
   });
@@ -81,20 +91,20 @@ describe("Golden suite (Step 10.2 / fixtures)", () => {
       {
         language: "javascript",
         filePath: "src/js/sample.ts",
-        srcRel: "fixtures/src/js/sample.ts",
-        goldenRel: "fixtures/src/js/sample.symbols.json",
+        srcRel: "agents/node/testgen/fixtures/src/js/sample.ts",
+        goldenRel: "agents/node/testgen/fixtures/src/js/sample.symbols.json",
       },
       {
         language: "python",
         filePath: "src/python/sample.py",
-        srcRel: "fixtures/src/python/sample.py",
-        goldenRel: "fixtures/src/python/sample.symbols.json",
+        srcRel: "agents/node/testgen/fixtures/src/python/sample.py",
+        goldenRel: "agents/node/testgen/fixtures/src/python/sample.symbols.json",
       },
       {
         language: "java",
         filePath: "src/java/SampleService.java",
-        srcRel: "fixtures/src/java/SampleService.java",
-        goldenRel: "fixtures/src/java/SampleService.symbols.json",
+        srcRel: "agents/node/testgen/fixtures/src/java/SampleService.java",
+        goldenRel: "agents/node/testgen/fixtures/src/java/SampleService.symbols.json",
       },
     ];
 
@@ -122,42 +132,52 @@ describe("Golden suite (Step 10.2 / fixtures)", () => {
     const lcovActual = mapToRecord(
       normalizeCoverageContent({
         format: "lcov",
-        content: readFileSync(path.join(REPO_ROOT, "fixtures/coverage/sample.lcov"), "utf8"),
+        content: readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/coverage/sample.lcov"), "utf8"),
         repoRoot: REPO_ROOT,
       }),
     );
     expect(lcovActual).toEqual(
-      JSON.parse(readFileSync(path.join(REPO_ROOT, "fixtures/coverage/sample.lcov.json"), "utf8")),
+      JSON.parse(readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/coverage/sample.lcov.json"), "utf8")),
     );
 
     const cobActual = mapToRecord(
       normalizeCoverageContent({
         format: "cobertura",
-        content: readFileSync(path.join(REPO_ROOT, "fixtures/coverage/sample.cobertura.xml"), "utf8"),
+        content: readFileSync(
+          path.join(REPO_ROOT, "agents/node/testgen/fixtures/coverage/sample.cobertura.xml"),
+          "utf8",
+        ),
         repoRoot: REPO_ROOT,
         knownSourceFiles: ["billing/sample.py"],
       }),
     );
     expect(cobActual).toEqual(
-      JSON.parse(readFileSync(path.join(REPO_ROOT, "fixtures/coverage/sample.cobertura.json"), "utf8")),
+      JSON.parse(
+        readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/coverage/sample.cobertura.json"), "utf8"),
+      ),
     );
 
     const jacocoActual = mapToRecord(
       normalizeCoverageContent({
         format: "jacoco",
-        content: readFileSync(path.join(REPO_ROOT, "fixtures/coverage/sample.jacoco.xml"), "utf8"),
+        content: readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/coverage/sample.jacoco.xml"), "utf8"),
         repoRoot: REPO_ROOT,
         knownSourceFiles: ["src/main/java/com/example/alpha/Utils.java", "src/main/java/com/example/beta/Utils.java"],
       }),
     );
     expect(jacocoActual).toEqual(
-      JSON.parse(readFileSync(path.join(REPO_ROOT, "fixtures/coverage/sample.jacoco.json"), "utf8")),
+      JSON.parse(
+        readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/coverage/sample.jacoco.json"), "utf8"),
+      ),
     );
   });
 
   it("sanitizes secret-leak fixture to golden sanitized output and classifies failure logs", () => {
-    const rawLeak = readFileSync(path.join(REPO_ROOT, "fixtures/logs/secret-leak.txt"), "utf8");
-    const expectedClean = readFileSync(path.join(REPO_ROOT, "fixtures/logs/secret-leak.sanitized.txt"), "utf8")
+    const rawLeak = readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/logs/secret-leak.txt"), "utf8");
+    const expectedClean = readFileSync(
+      path.join(REPO_ROOT, "agents/node/testgen/fixtures/logs/secret-leak.sanitized.txt"),
+      "utf8",
+    )
       .replace(/\r\n/g, "\n")
       .trimEnd();
     const actualClean = sanitizeOutput(rawLeak, { repoRoot: "C:\\workspace\\secret-repo" })
@@ -172,7 +192,7 @@ describe("Golden suite (Step 10.2 / fixtures)", () => {
       "maven-surefire-fail.txt",
       "gradle-fail.txt",
     ]) {
-      const logBody = readFileSync(path.join(REPO_ROOT, "fixtures/logs", logFile), "utf8");
+      const logBody = readFileSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/logs", logFile), "utf8");
       const res = classifyExecutionFailure({
         commandString: "runner",
         exitCode: 1,
@@ -289,7 +309,10 @@ describe("Golden suite (Step 10.2 / fixtures)", () => {
 
     // Chat template rendering check via runInitChat
     const tmp = makeTempDir("ua-golden-chat-");
-    const cfgRaw = readFileSync(path.join(REPO_ROOT, "fixtures/repos/js-vitest/.unit-agent.yml"), "utf8");
+    const cfgRaw = readFileSync(
+      path.join(REPO_ROOT, "agents/node/testgen/fixtures/repos/js-vitest/.unit-agent.yml"),
+      "utf8",
+    );
     writeFileSync(path.join(tmp, ".unit-agent.yml"), cfgRaw, "utf8");
     const cfg = ConfigSchema.parse(parseYaml(cfgRaw));
     await runInitChat({ repoRoot: tmp, workDir: path.join(tmp, ".unit-agent"), config: cfg });
@@ -299,7 +322,7 @@ describe("Golden suite (Step 10.2 / fixtures)", () => {
 
     // buildLanguageToolVersions smoke check on fixture repo
     const tv = buildLanguageToolVersions({
-      repoRoot: path.join(REPO_ROOT, "fixtures/repos/js-vitest"),
+      repoRoot: path.join(REPO_ROOT, "agents/node/testgen/fixtures/repos/js-vitest"),
       config: cfg,
       language: "javascript",
     });

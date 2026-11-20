@@ -3,11 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema, EXIT_CODES } from "../../src/contracts";
-import { sha256Hex } from "../../src/core/context";
-import { FakeLlmClient, isAuthErrorMessage, type LlmTestClient } from "../../src/llm";
-import { runGenerate } from "../../src/stages/generate";
-import { runRepair } from "../../src/stages/repair";
+import { ConfigSchema, EXIT_CODES } from "../../../../../../agents/node/testgen/src/contracts";
+import { sha256Hex } from "../../../../../../agents/node/testgen/src/core/context";
+import { FakeLlmClient, isAuthErrorMessage, type LlmTestClient } from "../../../../../../agents/node/testgen/src/llm";
+import { runGenerate } from "../../../../../../agents/node/testgen/src/stages/generate";
+import { runRepair } from "../../../../../../agents/node/testgen/src/stages/repair";
 
 const tempDirs: string[] = [];
 

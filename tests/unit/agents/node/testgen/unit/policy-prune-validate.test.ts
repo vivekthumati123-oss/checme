@@ -3,14 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema, type GitHubClientLike } from "../../src/contracts";
-import { sha256Hex } from "../../src/core/context";
-import { runStaticPolicyCheck } from "../../src/core/policy";
-import { deriveFinalContent, pruneFailingTests } from "../../src/core/prune";
-import { FakeLlmClient } from "../../src/llm";
-import { runPublish } from "../../src/stages/publish";
-import { runRepair } from "../../src/stages/repair";
-import { runValidate } from "../../src/stages/validate";
+import { ConfigSchema, type GitHubClientLike } from "../../../../../../agents/node/testgen/src/contracts";
+import { sha256Hex } from "../../../../../../agents/node/testgen/src/core/context";
+import { runStaticPolicyCheck } from "../../../../../../agents/node/testgen/src/core/policy";
+import { deriveFinalContent, pruneFailingTests } from "../../../../../../agents/node/testgen/src/core/prune";
+import { FakeLlmClient } from "../../../../../../agents/node/testgen/src/llm";
+import { runPublish } from "../../../../../../agents/node/testgen/src/stages/publish";
+import { runRepair } from "../../../../../../agents/node/testgen/src/stages/repair";
+import { runValidate } from "../../../../../../agents/node/testgen/src/stages/validate";
 
 const tempDirs: string[] = [];
 

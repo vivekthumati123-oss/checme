@@ -12,12 +12,12 @@ import {
   StageError,
   type Final,
   type GitHubClientLike,
-} from "../../src/contracts";
-import { sha256Hex } from "../../src/core/context";
-import { parseEnvironmentProtectionRules, verifyRunApprovals } from "../../src/github";
-import { runCommit } from "../../src/stages/commit";
-import { renderPublishSummaryMarkdown, runPublish } from "../../src/stages/publish";
-import { runCli } from "../../src/cli";
+} from "../../../../../../agents/node/testgen/src/contracts";
+import { sha256Hex } from "../../../../../../agents/node/testgen/src/core/context";
+import { parseEnvironmentProtectionRules, verifyRunApprovals } from "../../../../../../agents/node/testgen/src/github";
+import { runCommit } from "../../../../../../agents/node/testgen/src/stages/commit";
+import { renderPublishSummaryMarkdown, runPublish } from "../../../../../../agents/node/testgen/src/stages/publish";
+import { runCli } from "../../../../../../agents/node/testgen/src/cli";
 
 const tempDirs: string[] = [];
 

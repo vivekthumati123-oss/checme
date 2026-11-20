@@ -50,14 +50,14 @@ jobs:
       - shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f dist/cli.js ]; then
+          if [ ! -f agents/node/testgen/dist/cli.js ]; then
             npm ci --ignore-scripts --no-audit --no-fund >/dev/null
             npm run build:unit-agent >/dev/null
           fi
       - uses: actions/upload-artifact@v4
         with:
           name: ua-agent-dist
-          path: dist
+          path: agents/node/testgen/dist
           retention-days: 1
           overwrite: true
 
@@ -182,7 +182,7 @@ jobs:
   validate1:
     needs: [agent-bundle, prepare, generate]
     if: needs.prepare.outputs.has_work == 'true' && needs.generate.result == 'success' && needs.generate.outputs.status == 'ok'
-    uses: ./.github/workflows/validate.yml
+    uses: ./.github/workflows/_testgen-validate.yml
     permissions:
       contents: read
     with:
@@ -248,7 +248,7 @@ jobs:
   validate2:
     needs: [agent-bundle, prepare, repair]
     if: needs.repair.result == 'success' && needs.repair.outputs.status == 'ok'
-    uses: ./.github/workflows/validate.yml
+    uses: ./.github/workflows/_testgen-validate.yml
     permissions:
       contents: read
     with:

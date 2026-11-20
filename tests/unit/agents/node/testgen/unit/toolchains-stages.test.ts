@@ -3,25 +3,25 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema } from "../../src/contracts";
-import { runCommand } from "../../src/exec/exec";
+import { ConfigSchema } from "../../../../../../agents/node/testgen/src/contracts";
+import { runCommand } from "../../../../../../agents/node/testgen/src/exec/exec";
 import {
   matchToolchainMismatch,
   resolveJavaBuildTool,
   resolveToolchainForLanguage,
-} from "../../src/languages/toolchains";
-import { runBaseline } from "../../src/stages/baseline";
-import { runDetect } from "../../src/stages/detect";
-import { runInstall } from "../../src/stages/install";
-import { runNotice } from "../../src/stages/notice";
-import { runPlan } from "../../src/stages/plan";
-import { resolveOfflineScriptPath } from "../../src/stages/validate/runners";
+} from "../../../../../../agents/node/testgen/src/languages/toolchains";
+import { runBaseline } from "../../../../../../agents/node/testgen/src/stages/baseline";
+import { runDetect } from "../../../../../../agents/node/testgen/src/stages/detect";
+import { runInstall } from "../../../../../../agents/node/testgen/src/stages/install";
+import { runNotice } from "../../../../../../agents/node/testgen/src/stages/notice";
+import { runPlan } from "../../../../../../agents/node/testgen/src/stages/plan";
+import { resolveOfflineScriptPath } from "../../../../../../agents/node/testgen/src/stages/validate/runners";
 import {
   matchWrapperBootstrapFailure,
   recordJavaWrapperFallback,
   resolveJavaExecutionTarget,
   rewriteWrapperCommandToSystem,
-} from "../../src/stages/validate/runners/java/detect";
+} from "../../../../../../agents/node/testgen/src/stages/validate/runners/java/detect";
 
 const tempDirs: string[] = [];
 

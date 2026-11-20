@@ -17,6 +17,28 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/spike-*.ts"],
-  "exclude": ["node_modules", "dist", "packages", "agents", "tests", "fixtures"]
+  "include": ["agents/node/testgen/src/**/*.ts", "tests/unit/agents/node/testgen/**/*.ts", "scripts/spike-*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "agents/node/testgen/dist",
+    "agents/node/testgen/fixtures",
+    "packages",
+    "agents/node/codeconnect",
+    "agents/node/tasksync",
+    "agents/node/modplanner",
+    "agents/node/requirementshub",
+    "agents/node/architectconnect",
+    "agents/node/scm-bridge",
+    "agents/node/common",
+    "agents/python",
+    "tests/node",
+    "tests/python",
+    "tests/unit/agents/node/architectconnect",
+    "tests/unit/agents/node/modplanner",
+    "tests/unit/agents/node/requirementshub",
+    "tests/unit/packages",
+    "tests/unit/.github",
+    "tests/unit/scripts"
+  ]
 }

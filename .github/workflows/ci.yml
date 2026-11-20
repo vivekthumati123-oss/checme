@@ -30,8 +30,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build:unit-agent
-      - run: git diff --exit-code schema/
-      - run: node --throw-deprecation dist/cli.js --help
+      - run: git diff --exit-code agents/node/testgen/schema/
+      - run: node --throw-deprecation agents/node/testgen/dist/cli.js --help
       - run: npm run test:unit
       - run: npm run test:integration
       - run: npm run test:security

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runConfigCheck } from "../../src/config";
+import { runConfigCheck } from "../../../../../../agents/node/testgen/src/config";
 import {
   ARTIFACTS,
   ConfigSchema,
@@ -12,24 +12,24 @@ import {
   StageError,
   type GitHubClientLike,
   type UnitAgentConfig,
-} from "../../src/contracts";
-import { sha256Hex } from "../../src/core/context";
-import { runCommand } from "../../src/exec/exec";
-import { FakeLlmClient } from "../../src/llm";
-import { runBaseline } from "../../src/stages/baseline";
-import { runCommit } from "../../src/stages/commit";
-import { runDetect } from "../../src/stages/detect";
-import { runGenerate } from "../../src/stages/generate";
-import { runGuard } from "../../src/stages/guard";
-import { runInstall } from "../../src/stages/install";
-import { runNotice } from "../../src/stages/notice";
-import { runPlan } from "../../src/stages/plan";
-import { runPublish } from "../../src/stages/publish";
-import { runRepair } from "../../src/stages/repair";
-import { runValidate } from "../../src/stages/validate";
-import { sanitizeOutput } from "../../src/telemetry";
+} from "../../../../../../agents/node/testgen/src/contracts";
+import { sha256Hex } from "../../../../../../agents/node/testgen/src/core/context";
+import { runCommand } from "../../../../../../agents/node/testgen/src/exec/exec";
+import { FakeLlmClient } from "../../../../../../agents/node/testgen/src/llm";
+import { runBaseline } from "../../../../../../agents/node/testgen/src/stages/baseline";
+import { runCommit } from "../../../../../../agents/node/testgen/src/stages/commit";
+import { runDetect } from "../../../../../../agents/node/testgen/src/stages/detect";
+import { runGenerate } from "../../../../../../agents/node/testgen/src/stages/generate";
+import { runGuard } from "../../../../../../agents/node/testgen/src/stages/guard";
+import { runInstall } from "../../../../../../agents/node/testgen/src/stages/install";
+import { runNotice } from "../../../../../../agents/node/testgen/src/stages/notice";
+import { runPlan } from "../../../../../../agents/node/testgen/src/stages/plan";
+import { runPublish } from "../../../../../../agents/node/testgen/src/stages/publish";
+import { runRepair } from "../../../../../../agents/node/testgen/src/stages/repair";
+import { runValidate } from "../../../../../../agents/node/testgen/src/stages/validate";
+import { sanitizeOutput } from "../../../../../../agents/node/testgen/src/telemetry";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {
@@ -64,7 +64,7 @@ async function initGitRepoFromFixture(
   applyHeadChanges?: (repoRoot: string) => void,
 ): Promise<RepoContext> {
   const dir = makeTempDir(`ua-int-${fixtureName}-`);
-  cpSync(path.join(REPO_ROOT, "fixtures/repos", fixtureName), dir, { recursive: true });
+  cpSync(path.join(REPO_ROOT, "agents/node/testgen/fixtures/repos", fixtureName), dir, { recursive: true });
 
   await runGit(dir, ["init", "-b", "main"]);
   await runGit(dir, ["config", "user.email", "ci@unit-agent.local"]);
@@ -544,7 +544,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
       workDir: ctx.workDir,
       config,
       manifest,
-      fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+      fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
       writeOutputs: false,
     });
     expect(proposed.files[0]?.status).toBe("ok");
@@ -651,7 +651,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
       workDir: ctx.workDir,
       config,
       manifest,
-      fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+      fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
       writeOutputs: false,
     });
     const val = await runValidate({
@@ -743,7 +743,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -839,7 +839,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -920,7 +920,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
       workDir: strictCtx.workDir,
       config: strictCfg,
       manifest: strictManifest,
-      fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+      fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
       writeOutputs: false,
     });
     const strictVal = await runValidate({
@@ -982,7 +982,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
       workDir: mmCtx.workDir,
       config: mmCfg,
       manifest: mmManifest,
-      fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+      fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
       writeOutputs: false,
     });
     const mmVal = await runValidate({
@@ -1009,7 +1009,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
       diffSource: { kind: "git-range", base: repCtx.baseSha, head: repCtx.headSha },
       writeOutputs: false,
     });
-    const failScript = path.join(REPO_ROOT, "fixtures/llm/failing-test.js");
+    const failScript = path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/failing-test.js");
     const repProposed1 = await runGenerate({
       repoRoot: repCtx.repoRoot,
       workDir: repCtx.workDir,
@@ -1112,7 +1112,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm", scriptFile),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm", scriptFile),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1144,7 +1144,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm", pathScript),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm", pathScript),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1176,7 +1176,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm", genFailScript),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm", genFailScript),
         writeOutputs: false,
       });
       expect(proposed.files[0]?.status, genFailScript).toBe("schema_invalid");
@@ -1210,7 +1210,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/truncated.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/truncated.js"),
         writeOutputs: false,
       });
       expect(proposed.files[0]?.status).toBe("truncated");
@@ -1235,7 +1235,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/flaky-test.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/flaky-test.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1270,7 +1270,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/zero-gain.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/zero-gain.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1338,7 +1338,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/injection-in-source.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/injection-in-source.js"),
         writeOutputs: false,
       });
       expect(injProposed.files[0]?.status).toBe("ok");
@@ -1348,7 +1348,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/canary.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/canary.js"),
         writeOutputs: false,
       });
       const cleaned = sanitizeOutput(canaryProposed.files[0]!.content, {
@@ -1392,7 +1392,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
       workDir: envCtx.workDir,
       config: envCfg,
       manifest: envManifest,
-      fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+      fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
       writeOutputs: false,
     });
     const envVal = await runValidate({
@@ -1527,7 +1527,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config: cfg,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1640,7 +1640,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1708,7 +1708,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
         writeOutputs: false,
       });
       expect(proposed.files.map((f) => f.status)).toEqual(["ok", "over_request_budget"]);
@@ -1744,7 +1744,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
         workDir: ctx.workDir,
         config,
         manifest,
-        fakeLlmPath: path.join(REPO_ROOT, "fixtures/llm/good.js"),
+        fakeLlmPath: path.join(REPO_ROOT, "agents/node/testgen/fixtures/llm/good.js"),
         writeOutputs: false,
       });
       const val = await runValidate({
@@ -1816,7 +1816,7 @@ describe("Integration pipeline suite (Section 10.3 & X1-X9)", () => {
 
     // X8: runConfigCheck passes valid repos and flags malformed YAML/schema
     {
-      const validRes = runConfigCheck(path.join(REPO_ROOT, "fixtures/repos/js-vitest"));
+      const validRes = runConfigCheck(path.join(REPO_ROOT, "agents/node/testgen/fixtures/repos/js-vitest"));
       expect(validRes.ok).toBe(true);
 
       const badDir = makeTempDir("ua-int-badcfg-");

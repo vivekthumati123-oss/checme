@@ -5,16 +5,16 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { runCli } from "../../src/cli";
+import { runCli } from "../../../../../../agents/node/testgen/src/cli";
 import {
   ARTIFACTS,
   EXIT_CODES,
   FileContextSchema,
   LocalDetectSummarySchema,
   LocalValidateSummarySchema,
-} from "../../src/contracts";
-import { sha256Hex } from "../../src/core/context";
-import { extractTestRulesBlock } from "../../src/llm";
+} from "../../../../../../agents/node/testgen/src/contracts";
+import { sha256Hex } from "../../../../../../agents/node/testgen/src/core/context";
+import { extractTestRulesBlock } from "../../../../../../agents/node/testgen/src/llm";
 import {
   MAX_LOCAL_SUMMARY_BYTES,
   normalizeSummaryPaths,
@@ -27,8 +27,8 @@ import {
   runLocalStatus,
   runLocalValidate,
   serializeBoundedSummary,
-} from "../../src/local";
-import { runDetect } from "../../src/stages/detect";
+} from "../../../../../../agents/node/testgen/src/local";
+import { runDetect } from "../../../../../../agents/node/testgen/src/stages/detect";
 
 const createdDirs: string[] = [];
 
@@ -514,7 +514,7 @@ export class Calculator {
     writeFileSync(
       path.join(stagingAbs, mf.testPath),
       `import { describe, it, expect } from "vitest";
-import { add, mul } from "../../src/calc.js";
+import { add, mul } from "../../../../../../agents/node/testgen/src/calc.js";
 
 describe("calc", () => {
   it("adds numbers", () => {

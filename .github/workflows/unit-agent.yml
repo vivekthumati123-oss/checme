@@ -12,7 +12,7 @@ permissions: {}
 jobs:
   unit-agent:
     if: github.event.action != 'labeled' || github.event.label.name == 'unit-agent:run'
-    uses: ./.github/workflows/run.yml
+    uses: ./.github/workflows/_testgen-run.yml
     permissions:
       contents: write
       pull-requests: write

@@ -38,6 +38,8 @@ function resolveChatTemplatesDir(): string {
     path.resolve(moduleDir, "templates", "chat"),
     path.resolve(moduleDir, "..", "..", "dist", "templates", "chat"),
     path.resolve(moduleDir, "..", "..", "templates", "chat"),
+    path.resolve(process.cwd(), "agents", "node", "testgen", "templates", "chat"),
+    path.resolve(process.cwd(), "agents", "node", "testgen", "dist", "templates", "chat"),
     path.resolve(process.cwd(), "templates", "chat"),
     path.resolve(process.cwd(), "dist", "templates", "chat"),
   ];
@@ -320,6 +322,7 @@ export async function runInitChat(opts: RunInitChatOptions): Promise<RunInitChat
     const cliCandidates = [
       path.join(moduleDir, "cli.js"),
       path.resolve(moduleDir, "..", "..", "dist", "cli.js"),
+      path.resolve(process.cwd(), "agents", "node", "testgen", "dist", "cli.js"),
       path.resolve(process.cwd(), "dist", "cli.js"),
     ];
     const srcCli = cliCandidates.find((c) => existsSync(c));

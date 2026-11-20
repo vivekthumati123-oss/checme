@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema, type GitHubClientLike } from "../../src/contracts";
-import { runGuard, type PullRequestEventPayload } from "../../src/stages/guard";
+import { ConfigSchema, type GitHubClientLike } from "../../../../../../agents/node/testgen/src/contracts";
+import { runGuard, type PullRequestEventPayload } from "../../../../../../agents/node/testgen/src/stages/guard";
 
 const tempDirs: string[] = [];
 

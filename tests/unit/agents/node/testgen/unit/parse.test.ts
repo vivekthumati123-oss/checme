@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseSourceFile } from "../../src/core/parse";
+import { parseSourceFile } from "../../../../../../agents/node/testgen/src/core/parse";
 
 describe("AST parsers (web-tree-sitter)", () => {
   it("parses exported TypeScript functions, classes, and field arrows while skipping private/trivial", async () => {

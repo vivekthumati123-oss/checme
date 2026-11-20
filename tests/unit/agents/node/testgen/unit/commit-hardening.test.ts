@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { checkCommitPath, safeHeredocDelimiter } from "../../src/core/commit-paths";
-import { isBranchProtectionOrPermissionError } from "../../src/github/commit";
-import { isAuthErrorMessage } from "../../src/llm/auth-errors";
+import { checkCommitPath, safeHeredocDelimiter } from "../../../../../../agents/node/testgen/src/core/commit-paths";
+import { isBranchProtectionOrPermissionError } from "../../../../../../agents/node/testgen/src/github/commit";
+import { isAuthErrorMessage } from "../../../../../../agents/node/testgen/src/llm/auth-errors";
 
 describe("commit Gate 1 path policy", () => {
   it.each([

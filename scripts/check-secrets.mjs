@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0").filter(Boolean);
 const TOKEN_RE = /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b/;
 const KEY_RE = /-----BEGIN (?:[A-Z0-9 ]+ )?(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/;
-const ALLOW = [/^fixtures\/logs\//, /^evals\//, /^test\//];
+const ALLOW = [/^agents\/node\/testgen\/fixtures\/logs\//, /^evals\//, /^tests\/unit\/agents\/node\/testgen\//];
 const problems = [];
 for (const f of files) {
   if (/(^|\/)\.env(\.|$)/.test(f) && !f.endsWith(".env.example")) problems.push(`${f}: env file is tracked`);

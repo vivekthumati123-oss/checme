@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { runStaticPolicyCheck } from "../../src/core/policy";
+import { runStaticPolicyCheck } from "../../../../../../agents/node/testgen/src/core/policy";
 import { EVAL_CORPUS } from "./corpus";
 
 export interface EvalSummary {
