@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   ARTIFACTS,
@@ -27,7 +27,19 @@ function makeTempDir(): string {
   return dir;
 }
 
+let prevGithubRepo: string | undefined;
+
+beforeEach(() => {
+  prevGithubRepo = process.env.GITHUB_REPOSITORY;
+  delete process.env.GITHUB_REPOSITORY;
+});
+
 afterEach(() => {
+  if (prevGithubRepo === undefined) {
+    delete process.env.GITHUB_REPOSITORY;
+  } else {
+    process.env.GITHUB_REPOSITORY = prevGithubRepo;
+  }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
@@ -661,5 +673,24 @@ describe("github integration & commit stage", () => {
       approvalEnvironment: "unit-agent-approval",
     });
     expect(rendered).not.toContain("<img");
+  });
+
+  it("rejects commit when process.env.GITHUB_REPOSITORY does not match final.repo", async () => {
+    const dir = makeTempDir();
+    const workDir = path.join(dir, ".unit-agent");
+    makeFinalFixture(workDir);
+
+    process.env.GITHUB_REPOSITORY = "other-org/other-repo";
+    await expect(
+      runCommit({
+        workDir,
+        expectedHead: "head123",
+        runId: 4242,
+        writeOutputs: false,
+      }),
+    ).rejects.toMatchObject({
+      code: EXIT_CODES.POLICY_OR_HASH,
+      reason: "repo_mismatch",
+    });
   });
 });

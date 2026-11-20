@@ -5,7 +5,7 @@ __pycache__/
 .l2/
 .l2-platform/
 .unit-agent/
-/dist/
+dist/
 /coverage/
 .pytest_cache/
 target/
@@ -15,4 +15,5 @@ build/
 .env.*.local
 .DS_Store
 
+.gradle/
 fixtures/repos/*/.gradle/

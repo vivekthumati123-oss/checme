@@ -46,7 +46,9 @@ export function resolveOfflineScriptPath(_repoRoot?: string): string {
   const candidates = [
     path.resolve(moduleDir, "scripts", "run-offline.sh"),
     path.resolve(moduleDir, "..", "scripts", "run-offline.sh"),
+    path.resolve(moduleDir, "..", "..", "..", "..", "..", "..", "..", "scripts", "run-offline.sh"),
     path.resolve(moduleDir, "..", "..", "..", "..", "scripts", "run-offline.sh"),
+    path.resolve(process.cwd(), "scripts", "run-offline.sh"),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) {

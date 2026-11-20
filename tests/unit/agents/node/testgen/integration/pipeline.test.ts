@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writ
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runConfigCheck } from "../../../../../../agents/node/testgen/src/config";
 import {
@@ -38,7 +38,19 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+let prevGithubRepo: string | undefined;
+
+beforeEach(() => {
+  prevGithubRepo = process.env.GITHUB_REPOSITORY;
+  delete process.env.GITHUB_REPOSITORY;
+});
+
 afterEach(() => {
+  if (prevGithubRepo === undefined) {
+    delete process.env.GITHUB_REPOSITORY;
+  } else {
+    process.env.GITHUB_REPOSITORY = prevGithubRepo;
+  }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
   }
