@@ -28,9 +28,9 @@ jobs:
       - run: npm ci
       - run: npm run build:unit-agent
       - if: inputs.live-sdk != 'true'
-        run: npx vitest run test/eval
+        run: npx vitest run tests/unit/agents/node/testgen/eval
       - if: inputs.live-sdk == 'true'
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-        run: npx vitest run test/eval
+        run: npx vitest run tests/unit/agents/node/testgen/eval
 
