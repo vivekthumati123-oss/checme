@@ -11,6 +11,7 @@
     "start": "node src/index.js",
     "build": "node ../../scripts/build.mjs",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint --config eslint.config.mjs .",
     "test": "vitest run"
   },
   "dependencies": {

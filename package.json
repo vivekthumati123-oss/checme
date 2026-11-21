@@ -19,7 +19,7 @@
     "build:unit-agent": "node scripts/build.mjs",
     "package": "node scripts/package.js",
     "typecheck": "tsc --project agents/node/testgen/tsconfig.json --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint --config agents/node/testgen/eslint.config.mjs .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run --config agents/node/testgen/vitest.config.ts",

@@ -1,8 +1,24 @@
-name: unit-agent-ci
+name: TestGen CI
+
 on:
   push:
     branches: [main]
+    paths:
+      - "agents/node/testgen/**"
+      - "tests/unit/agents/node/testgen/**"
+      - ".unit-agent.yml"
+      - ".github/workflows/testgen-*.yml"
+      - ".github/workflows/_testgen-*.yml"
+      - ".github/workflows/unit-agent.yml"
   pull_request:
+    paths:
+      - "agents/node/testgen/**"
+      - "tests/unit/agents/node/testgen/**"
+      - ".unit-agent.yml"
+      - ".github/workflows/testgen-*.yml"
+      - ".github/workflows/_testgen-*.yml"
+      - ".github/workflows/unit-agent.yml"
+  workflow_dispatch:
 
 permissions: {}
 
@@ -39,4 +55,3 @@ jobs:
       - run: npm run validate
       - run: node --test tests/node/agents.test.js
       - run: npm run eval
-
