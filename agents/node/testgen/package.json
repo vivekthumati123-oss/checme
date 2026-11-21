@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "build": "node ../../scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
