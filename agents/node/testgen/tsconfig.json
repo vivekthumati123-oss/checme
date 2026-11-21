@@ -17,13 +17,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": [
-    "src/**/*.ts",
-    "../../../tests/unit/agents/node/testgen/**/*.ts"
-  ],
-  "exclude": [
-    "dist",
-    "fixtures",
-    "node_modules"
-  ]
+  "include": ["src/**/*.ts", "../../../tests/unit/agents/node/testgen/**/*.ts"],
+  "exclude": ["dist", "fixtures", "node_modules"]
 }
