@@ -1,0 +1,11 @@
+node_modules/
+dist/
+fixtures/
+schema/
+templates/
+scripts/
+src/*.js
+*.md
+*.yml
+*.yaml
+package.json

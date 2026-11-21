@@ -1,0 +1,21 @@
+*                                         @techm-microsoft-ibu/l2-platform
+/packages/                                @techm-microsoft-ibu/l2-platform
+/.github/skills/work-items/               @techm-microsoft-ibu/l2-platform @techm-microsoft-ibu/security
+/.github/hooks/                           @techm-microsoft-ibu/l2-platform @techm-microsoft-ibu/security
+/configurations/policies/                 @techm-microsoft-ibu/l2-platform @techm-microsoft-ibu/security
+/.github/agents/unit-agent.agent.md       @vivek
+/l2/testgen.json                          @vivek
+/agents/node/testgen/                     @vivek
+/.github/agents/finops-agent.agent.md     @vivek
+/.github/agents/code-agent.agent.md       @shireesha
+/.github/agents/task-agent.agent.md       @shireesha
+/agents/node/codeconnect/                 @shireesha
+/agents/node/tasksync/                    @shireesha
+/agents/node/modplanner/                  @techm-microsoft-ibu/l2-platform
+/.github/agents/modplanner.agent.md       @techm-microsoft-ibu/l2-platform
+/l2/modplanner.json                       @techm-microsoft-ibu/l2-platform
+/agents/node/requirementshub/              @pravalika
+/l2/requirementshub.json                   @pravalika
+/.github/skills/l2-platform-runner/        @techm-microsoft-ibu/l2-platform
+/.github/agents/fsd-agent.agent.md        @pravalika
+/.github/agents/hld-agent.agent.md        @srivyshnavi

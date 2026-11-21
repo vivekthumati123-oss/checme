@@ -63,7 +63,7 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
       expect(cliDoc.outputs?.[requiredOut]?.value).toBe(`\${{ steps.run.outputs.${requiredOut} }}`);
     }
 
-    const buildScript = readFileSync(path.join(REPO_ROOT, "scripts/build.mjs"), "utf8");
+    const buildScript = readFileSync(path.join(REPO_ROOT, "agents/node/testgen/scripts/build.mjs"), "utf8");
     expect(buildScript).toContain("node20");
 
     const distCli = path.join(REPO_ROOT, "agents/node/testgen/dist/cli.js");
@@ -78,8 +78,8 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
     expect(APPROVE_ENV_NAME).toBe("unit-agent-approval");
     const unitAgentYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/unit-agent.yml"), "utf8");
     const runYml = readFileSync(path.join(REPO_ROOT, ".github/workflows/_testgen-run.yml"), "utf8");
-    const setupDoc = readFileSync(path.join(REPO_ROOT, "docs/setup.md"), "utf8");
-    const approverDoc = readFileSync(path.join(REPO_ROOT, "docs/approver-guide.md"), "utf8");
+    const setupDoc = readFileSync(path.join(REPO_ROOT, "docs/testgen/setup.md"), "utf8");
+    const approverDoc = readFileSync(path.join(REPO_ROOT, "docs/testgen/approver-guide.md"), "utf8");
 
     expect(unitAgentYml).toContain("approval-environment: unit-agent-approval");
     expect(runYml).toContain('default: "unit-agent-approval"');
@@ -100,7 +100,7 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
         };
       };
     };
-    const supportedDoc = readFileSync(path.join(REPO_ROOT, "docs/supported-versions.md"), "utf8");
+    const supportedDoc = readFileSync(path.join(REPO_ROOT, "docs/testgen/supported-versions.md"), "utf8");
 
     expect(supportedDoc).toContain("Maintainer:");
     for (const osName of matrixDoc.jobs["node-matrix"].strategy.matrix.os) {

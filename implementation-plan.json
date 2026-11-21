@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "generatedAt": "2026-11-09T14:06:24.961Z",
+    "sourceStory": {
+      "key": "S-1",
+      "summary": "Story"
+    }
+  },
+  "story": {
+    "key": "S-1",
+    "summary": "Story",
+    "status": "Unknown"
+  },
+  "requirements": [],
+  "acceptanceCriteria": [],
+  "implementationBacklog": [
+    {
+      "taskId": "TASK-1",
+      "title": "A",
+      "complexity": "Medium",
+      "storyPoints": 1,
+      "subtasks": []
+    }
+  ]
+}

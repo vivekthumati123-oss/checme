@@ -1,0 +1,190 @@
+{
+  "$schema": ".schemas/bundles.schema.json",
+  "marketplace": {
+    "name": "axon-sdlc-l2-agents",
+    "repository": "techm-cto-caio/axon-ghcp-L2-marketplace",
+    "description": "Tech Mahindra Microsoft IBU agents, skills and guardrails for GitHub Copilot",
+    "owner": {
+      "name": "Microsoft IBU AI Platform",
+      "email": "l2-platform@example.com"
+    }
+  },
+  "platform": {
+    "repository": "techm-cto-caio/axon-ghcp-L2-agents"
+  },
+  "bundles": [
+    {
+      "name": "l2-guardrails",
+      "displayName": "L2 Guardrails",
+      "version": "1.3.1",
+      "status": "published",
+      "description": "Blocks dangerous commands, protected-path writes, secret reads and secrets in content, and writes an audit log. Install this first.",
+      "keywords": [
+        "security",
+        "guardrails",
+        "audit"
+      ],
+      "agents": [],
+      "skills": [],
+      "hooks": [
+        "l2-guardrails",
+        "l2-audit"
+      ],
+      "instructions": [
+        "l2-guardrails"
+      ]
+    },
+    {
+      "name": "sdlc-quality",
+      "displayName": "SDLC Quality",
+      "version": "1.3.1",
+      "status": "published",
+      "description": "Unit test agent and Arrange-Act-Assert skill for Jest, pytest and JUnit.",
+      "keywords": [
+        "testing",
+        "unit-tests",
+        "quality"
+      ],
+      "agents": [
+        "unit-agent"
+      ],
+      "skills": [
+        "aaa-unit-tests"
+      ],
+      "hooks": [],
+      "instructions": [
+        "unit-testing"
+      ]
+    },
+    {
+      "name": "sdlc-delivery",
+      "displayName": "SDLC Delivery",
+      "version": "1.3.1",
+      "status": "published",
+      "description": "Implement work items and break stories into tasks, with GitHub Issues, Jira and Azure DevOps access (no MCP).",
+      "keywords": [
+        "delivery",
+        "planning",
+        "jira",
+        "azure-devops"
+      ],
+      "agents": [
+        "code-agent",
+        "task-agent"
+      ],
+      "skills": [
+        "story-decomposition",
+        "work-items"
+      ],
+      "hooks": [],
+      "instructions": [
+        "javascript",
+        "python"
+      ]
+    },
+    {
+      "name": "sdlc-design",
+      "displayName": "SDLC Design",
+      "version": "1.0.0",
+      "status": "published",
+      "description": "Functional specifications and high level designs with traceability.",
+      "keywords": [
+        "design",
+        "architecture",
+        "requirements"
+      ],
+      "agents": [
+        "fsd-agent",
+        "hld-agent",
+        "architectconnect"
+      ],
+      "skills": [
+        "work-items",
+        "architectconnect",
+        "l2-platform-runner"
+      ],
+      "hooks": [],
+      "instructions": []
+    },
+    {
+      "name": "sdlc-modernization",
+      "displayName": "SDLC Modernization",
+      "version": "1.0.1",
+      "status": "published",
+      "description": "ModPlanner and RequirementsHub with approval-gated Jira writes and a configured L2 platform checkout launcher.",
+      "keywords": ["modernization", "planning", "requirements", "jira"],
+      "agents": ["modplanner", "fsd-agent"],
+      "skills": ["work-items", "l2-platform-runner"],
+      "hooks": ["l2-guardrails", "l2-audit"],
+      "instructions": ["l2-guardrails"]
+    },
+    {
+      "name": "copilot-finops",
+      "displayName": "Copilot FinOps",
+      "version": "1.4.1",
+      "status": "published",
+      "description": "Narratives for Copilot seat utilisation, cost and budget alerts.",
+      "keywords": [
+        "finops",
+        "copilot",
+        "cost"
+      ],
+      "agents": [
+        "finops-agent"
+      ],
+      "skills": [
+        "copilot-finops-report",
+        "copilot-metrics-fetcher",
+        "cost-projection-engine",
+        "insight-engine"
+      ],
+      "hooks": [
+        "l2-audit"
+      ],
+      "instructions": [
+        "teams-alert-format"
+      ]
+    },
+    {
+      "name": "figma-design",
+      "displayName": "Figma Design",
+      "version": "1.0.0",
+      "status": "published",
+      "description": "Design screens, wireframes, FigJam diagrams, reusable components, design-system audits and token sync in Figma through the Figma MCP server.",
+      "keywords": [
+        "figma",
+        "design",
+        "design-system",
+        "ui",
+        "wireframe",
+        "figjam",
+        "diagram",
+        "tokens"
+      ],
+      "agents": [
+        "figma-agent"
+      ],
+      "skills": [
+        "figma-agent-setup",
+        "figma-build-screen",
+        "figma-component-builder",
+        "figma-design-system-audit",
+        "figma-flow-diagram",
+        "figma-generate-design",
+        "figma-generate-library",
+        "figma-requirements-intake",
+        "figma-tokens-sync",
+        "figma-use",
+        "figma-wireframe"
+      ],
+      "hooks": [
+        "l2-guardrails",
+        "l2-audit"
+      ],
+      "instructions": [
+        "l2-guardrails",
+        "figma-ui-code"
+      ]
+    }
+  ]
+}

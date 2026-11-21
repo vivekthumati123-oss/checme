@@ -10,9 +10,6 @@ permissions:
 
 jobs:
   node:
-    if: >
-      github.actor != 'github-actions[bot]' &&
-      !contains(github.event.head_commit.message, '[unit-agent]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,13 +25,9 @@ jobs:
       - run: npm test
       - run: npm run eval
       - run: npm run demo
-      - if: hashFiles('bundles.json') != ''
-        run: npm run package
+      - run: npm run package
 
   python:
-    if: >
-      github.actor != 'github-actions[bot]' &&
-      !contains(github.event.head_commit.message, '[unit-agent]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

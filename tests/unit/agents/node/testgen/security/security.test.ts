@@ -121,7 +121,7 @@ describe("Security suite (Section 10.4 mandatory checks 1-11)", () => {
     "1a. offline-unshare blocks outbound network while allowing loopback on Linux CI",
     async () => {
       const dir = makeTempDir("ua-sec-unshare-");
-      const script = path.join(REPO_ROOT, "scripts/run-offline.sh");
+      const script = path.join(REPO_ROOT, "agents/node/testgen/scripts/run-offline.sh");
       const res = await runCommand(
         process.execPath,
         [

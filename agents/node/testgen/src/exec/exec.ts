@@ -866,7 +866,8 @@ export async function runCommand(
 
   // Optional unshare offline wrapper (Linux only, falls back visibly when unavailable or failing self-test).
   if (options.useOfflineWrapper && options.config?.offline.strategy === "unshare") {
-    const script = options.offlineScriptPath ?? path.resolve(process.cwd(), "scripts/run-offline.sh");
+    const script =
+      options.offlineScriptPath ?? path.resolve(process.cwd(), "agents/node/testgen/scripts/run-offline.sh");
     let unshareReady = false;
     if (process.platform === "linux" && existsSync(script)) {
       const probe = await execa("bash", [script, "true"], {
