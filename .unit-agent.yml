@@ -5,7 +5,7 @@ languages:
     enabled: true
     framework: vitest
     installCommand: npm ci --ignore-scripts --no-audit --no-fund
-    testCommand: "npx vitest run"
+    testCommand: "npx vitest run --config agents/node/testgen/vitest.config.ts"
     coverageFile: coverage/lcov.info
     coverageFormat: lcov
     sourceGlobs:
