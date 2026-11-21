@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { processServiceB } from "../../../../../agents/node/testgen/src/demo/service-b";
+import { processServiceB } from "../../../../../../agents/node/testgen/src/demo/service-b";
 
 describe("processServiceB", () => {
   it("returns zero for zero or negative count", () => {
