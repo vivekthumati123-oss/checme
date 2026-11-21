@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   node:
+    if: >
+      github.actor != 'github-actions[bot]' &&
+      !contains(github.event.head_commit.message, '[unit-agent]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +32,9 @@ jobs:
         run: npm run package
 
   python:
+    if: >
+      github.actor != 'github-actions[bot]' &&
+      !contains(github.event.head_commit.message, '[unit-agent]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

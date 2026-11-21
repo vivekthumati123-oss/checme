@@ -11,7 +11,10 @@ permissions: {}
 
 jobs:
   unit-agent:
-    if: github.event.action != 'labeled' || github.event.label.name == 'unit-agent:run'
+    if: >
+      github.actor != 'github-actions[bot]' &&
+      !contains(github.event.head_commit.message, '[unit-agent]') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'unit-agent:run')
     uses: ./.github/workflows/_testgen-run.yml
     permissions:
       contents: write
