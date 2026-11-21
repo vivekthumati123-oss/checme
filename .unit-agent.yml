@@ -1,0 +1,14 @@
+version: 1
+mode: report
+languages:
+  javascript:
+    enabled: true
+    framework: vitest
+    testCommand: "npx vitest run"
+    coverageFile: coverage/lcov.info
+    coverageFormat: lcov
+    sourceGlobs:
+      - "agents/node/testgen/src/**/*.ts"
+      - "agents/node/testgen/src/**/*.js"
+    testPathPatterns:
+      - "tests/unit/agents/node/testgen/unit/{name}.test.{ext}"

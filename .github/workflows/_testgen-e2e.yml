@@ -1,5 +1,7 @@
 name: unit-agent-e2e
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       live-sdk:
