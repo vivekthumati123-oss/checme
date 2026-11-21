@@ -1,7 +1,5 @@
 name: unit-agent-matrix
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
