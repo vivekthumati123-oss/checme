@@ -3,7 +3,7 @@ import {
   calculateBonus,
   calculateTaxDeduction,
   formatAccountName,
-} from "../../../../../agents/node/testgen/src/demo/account-service";
+} from "../../../../../../agents/node/testgen/src/demo/account-service";
 
 describe("account-service covered functions", () => {
   describe("calculateBonus", () => {
