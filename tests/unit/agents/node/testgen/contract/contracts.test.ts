@@ -188,7 +188,7 @@ describe("Contract suite (workflow YAML, schemas, and repo invariants)", () => {
       "unit-agent.yml",
       "_testgen-run.yml",
       "_testgen-validate.yml",
-      "ci.yml",
+      "testgen-ci.yml",
       "_testgen-matrix.yml",
       "release.yml",
       "_testgen-e2e.yml",
