@@ -11,5 +11,31 @@ languages:
     sourceGlobs:
       - "agents/node/testgen/src/**/*.ts"
       - "agents/node/testgen/src/**/*.js"
+      - "src/**/*.ts"
+      - "src/**/*.js"
     testPathPatterns:
       - "tests/unit/agents/node/testgen/unit/{name}.test.{ext}"
+  python:
+    enabled: true
+    framework: pytest
+    installCommand: pip install pytest pytest-cov
+    testCommand: "pytest --cov=src --cov-report=xml:coverage.xml"
+    coverageFile: coverage.xml
+    coverageFormat: cobertura
+    sourceGlobs:
+      - "src/**/*.py"
+    testPathPatterns:
+      - "tests/test_{name}.py"
+  java:
+    enabled: true
+    framework: junit5
+    buildTool: maven
+    testCommand: "mvn test"
+    coverageFile: target/site/jacoco/jacoco.xml
+    coverageFormat: jacoco
+    coverage:
+      mode: auto
+    sourceGlobs:
+      - "src/**/*.java"
+    testPathPatterns:
+      - "src/test/java/{package}/{Name}Test.java"
